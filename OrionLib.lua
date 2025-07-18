@@ -36,7 +36,7 @@ local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 
 -- The Foundational Library
-local OrionUI = require(script.Parent.OrionUI)
+local OrionUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Alexchad-source/My-Librarys/refs/heads/main/GuiHelperLibrary.lua"))()
 
 -- Public State (Rayfield Style)
 Library.Window = nil
