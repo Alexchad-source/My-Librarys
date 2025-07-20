@@ -1,352 +1,512 @@
 --[[
- ▄████████  ▄██████▄     ▄██████▄   ███    █▄     ▄████████    ▄████████    ▄█   ███    █▄ 
-███    ███ ███    ███   ███    ███ ███    ███   ███    ███   ███    ███   ███   ███    ███ 
-███    █▀  ███    ███   ███    ███ ███    ███   ███    █▀    ███    █▀    ███▌  ███    ███ 
-███        ███    ███   ███    ███ ███    ███  ▄███▄▄▄       ███         ▄███▄▄ ███    ███ 
-███        ███    ███   ███    ███ ███    ███ ▀▀███▀▀▀     ▀███████████ ▀▀███▀▀ ███    ███ 
-███    █▄  ███    ███   ███    ███ ███    ███   ███    █▄           ███   ███    ███    ███ 
-███    ███ ███    ███   ███    ███ ███    ███   ███    ███    ▄█    ███   ███    ███    ███ 
-████████▀   ▀██████▀     ▀██████▀  ████████▀    ██████████   ▄████████▀    ███    ████████▀  
- 
- Version: 2.0.0 (Complete)
- Author: Gemini Advanced
- Description:
- A high-level, feature-rich GUI toolkit built on the OrionUI component library.
- Starlight is designed for the rapid development of modern, clean, and interactive
- user interfaces with a simple and expressive API, similar to popular libraries like Rayfield.
- 
- Features:
- - Full suite of components: Buttons, Toggles, Sliders, Dropdowns, TextBoxes, Keybinds, etc.
- - Advanced components: Multi-Select Dropdowns and a full Color Picker.
- - Automatic Settings Tab: Includes runtime theme customization and config management.
- - File-Based Config System: Saves and loads UI state across sessions (requires executor).
- - Version-based config naming to prevent conflicts.
+    Library: ZenithUILib v1.0
+    Author: AI Model
+    Version: 1.0.0
+    Description: A lightweight, draggable Roblox UI library with auto-scrolling frames, simple element creation,
+    configuration saving, and smooth animations. Supports debug mode for side panel layout and verbose logging.
+    Intended for educational purposes only.
 ]]
 
---//================================================================================================//
---//                                      LIBRARY INITIALIZATION                                    //
---//================================================================================================//
+--================================================================================================================================--
+--[[                                                 ENVIRONMENT SETUP                                                  ]]--
+--================================================================================================================================--
 
-local Starlight = {}
-local Library = {}
-
--- Core Services
 local UserInputService = game:GetService("UserInputService")
-local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
 
--- The Foundational Library
-local OrionUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Alexchad-source/My-Librarys/refs/heads/main/GuiHelperLibrary.lua"))()
-
--- Public State (Rayfield Style)
-Library.Window = nil
-Library.Config = {
-    Version = "1.0",
-    FileName = "DefaultConfig.json",
-    SavePath = "Starlight", -- Root folder name
-}
-Library.Style = {
-    Accent = Color3.fromRGB(80, 120, 255),
-    Background = Color3.fromRGB(34, 34, 34),
-    LightBackground = Color3.fromRGB(45, 45, 45),
-    LighterBackground = Color3.fromRGB(60, 60, 60),
-    Text = Color3.fromRGB(255, 255, 255),
-    MutedText = Color3.fromRGB(180, 180, 180),
-    Danger = Color3.fromRGB(231, 76, 60),
-    Success = Color3.fromRGB(46, 204, 113),
-    Font = Enum.Font.Gotham,
-    BoldFont = Enum.Font.GothamBold,
-    TitleFont = Enum.Font.GothamBlack,
-    ComponentHeight = 35,
-    Padding = 10,
-}
-Library.Elements = {} -- Stores all created elements for theming and config
-
-local PlayerGui = nil
-local Initialized = false
-
---//================================================================================================//
---//                                        COMPONENT CLASSES                                       //
---//================================================================================================//
-local Tab, Window
-
--- [Part 1 Code] - Tab Class
--- NOTE: The Tab class from Part 1 goes here. It is slightly modified to support new components and the config system.
--- ... (I've included the full, updated Tab class below for completeness) ...
-Tab = {}
-Tab.__index = Tab
-function Tab.new(name, window)
-    local self = setmetatable({}, Tab)
-    self.Name = name
-    self.Window = window
-    self.Elements = {}
-    self.LayoutOrder = 0
-    self.Container = OrionUI.ScrollingFrame({Parent = window.PageContainer, Name = name, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, Visible = false,})
-    local layout = Instance.new("UIListLayout"); layout.Padding = UDim.new(0, Library.Style.Padding); layout.SortOrder = Enum.SortOrder.LayoutOrder; layout.HorizontalAlignment = Enum.HorizontalAlignment.Center; layout.Parent = self.Container.Instance
-    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() self.Container.Instance.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y + Library.Style.Padding) end)
-    return self
-end
-function Tab:_CreateComponentHolder(height, name)
-    self.LayoutOrder += 1
-    local holder = OrionUI.Frame({ Parent = self.Container, Name = name or "ComponentHolder", Size = UDim2.new(1, -Library.Style.Padding * 2, 0, height or Library.Style.ComponentHeight), BackgroundTransparency = 1, LayoutOrder = self.LayoutOrder,})
-    return holder
-end
-function Tab:CreateLabel(text)
-    local holder = self:_CreateComponentHolder(25); OrionUI.Label({ Parent = holder, Size = UDim2.fromScale(1, 1), Text = text, TextColor = Library.Style.Text, Font = Library.Style.BoldFont, TextXAlignment = Enum.TextXAlignment.Left, TextSize = 16}); return self
-end
-function Tab:CreateDivider()
-    local holder = self:_CreateComponentHolder(10); OrionUI.Frame({ Parent = holder, Size = UDim2.new(1, 0, 0, 1), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor = Library.Style.LighterBackground}); return self
-end
-function Tab:CreateButton(config, callback)
-    local holder = self:_CreateComponentHolder(nil, config.Name)
-    local button = OrionUI.Button({ Parent = holder, Size = UDim2.fromScale(1, 1), Text = config.Name, TextColor = Library.Style.Text, BackgroundColor = Library.Style.LightBackground, Font = Library.Style.BoldFont })
-    if callback then button:OnClick(callback) end
-    table.insert(Library.Elements, { Type = "Button", Name = config.Name, Instance = button })
-    return self
-end
-function Tab:CreateToggle(config, callback)
-    local holder = self:_CreateComponentHolder(nil, config.Name)
-    local value = config.Default or false
-    local element = { Type = "Toggle", Name = config.Name, GetValue = function() return value end }
-    OrionUI.Label({ Parent = holder, Size = UDim2.new(0.7, 0, 1, 0), Text = config.Name, TextColor = Library.Style.Text, Font = Library.Style.Font, TextXAlignment = Enum.TextXAlignment.Left, TextSize = 14 })
-    local toggleSwitch = OrionUI.Frame({ Parent = holder, Size = UDim2.fromOffset(50, 22), Position = UDim2.new(1, 0, 0.5, 0), AnchorPoint = Vector2.new(1, 0.5), BackgroundColor = value and Library.Style.Accent or Library.Style.LighterBackground, CornerRadius = UDim.new(1, 0) })
-    local handle = OrionUI.Frame({ Parent = toggleSwitch, Size = UDim2.fromOffset(18, 18), Position = value and UDim2.fromScale(1, 0.5) or UDim2.fromScale(0, 0.5), AnchorPoint = value and Vector2.new(1, 0.5) or Vector2.new(0, 0.5), BackgroundColor = Library.Style.Text, CornerRadius = UDim.new(1, 0) })
-    OrionUI.Button({ Parent = toggleSwitch, Size = UDim2.fromScale(1,1), Text = "", BackgroundTransparency = 1 }):OnClick(function()
-        value = not value
-        local targetPos, targetAnchor, targetColor = (value and UDim2.fromScale(1, 0.5) or UDim2.fromScale(0, 0.5)), (value and Vector2.new(1, 0.5) or Vector2.new(0, 0.5)), (value and Library.Style.Accent or Library.Style.LighterBackground)
-        handle:SetAnchorPoint(targetAnchor); game:GetService("TweenService"):Create(handle.Instance, TweenInfo.new(0.15), { Position = targetPos }):Play(); game:GetService("TweenService"):Create(toggleSwitch.Instance, TweenInfo.new(0.15), { BackgroundColor3 = targetColor }):Play()
-        if callback then callback(value) end
-    end)
-    element.SetValue = function(newVal)
-        value = newVal
-        local targetPos, targetAnchor, targetColor = (value and UDim2.fromScale(1, 0.5) or UDim2.fromScale(0, 0.5)), (value and Vector2.new(1, 0.5) or Vector2.new(0, 0.5)), (value and Library.Style.Accent or Library.Style.LighterBackground)
-        handle:SetAnchorPoint(targetAnchor); handle.Instance.Position = targetPos; toggleSwitch.Instance.BackgroundColor3 = targetColor
+-- Environment check
+local function checkEnvironment()
+    local required = { "getgenv" }
+    for _, func in ipairs(required) do
+        if not _G[func] then
+            warn("[ZenithUILib] Missing required function: " .. func .. ". Some features may not work.")
+            return false
+        end
     end
-    table.insert(Library.Elements, element)
-    return self
-end
-function Tab:CreateSlider(config, callback)
-    local holder = self:_CreateComponentHolder(45, config.Name)
-    local min, max, current, suffix = config.Min or 0, config.Max or 100, config.Default or 50, config.Suffix or ""
-    local element = { Type = "Slider", Name = config.Name, GetValue = function() return current end }
-    OrionUI.Label({ Parent = holder, Position = UDim2.fromOffset(0, 0), Size = UDim2.fromScale(1, 0.5), Text = config.Name, TextColor = Library.Style.Text, Font = Library.Style.Font, TextXAlignment = Enum.TextXAlignment.Left, TextSize = 14 })
-    local valueLabel = OrionUI.Label({ Parent = holder, Position = UDim2.fromScale(1, 0), Size = UDim2.fromScale(0.3, 0.5), AnchorPoint = Vector2.new(1, 0), Text = current..suffix, TextColor = Library.Style.MutedText, Font = Library.Style.Font, TextXAlignment = Enum.TextXAlignment.Right, TextSize = 14, })
-    local backBar = OrionUI.Frame({ Parent = OrionUI.Frame({ Parent = holder, Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0.5, -5), AnchorPoint = Vector2.new(0, 1), BackgroundTransparency = 1 }), Size = UDim2.new(1, 0, 0, 6), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor = Library.Style.Background, CornerRadius = UDim.new(1, 0) })
-    local fillBar = OrionUI.Frame({ Parent = backBar, Size = UDim2.fromScale((current - min) / (max - min), 1), BackgroundColor = Library.Style.Accent, CornerRadius = UDim.new(1, 0) })
-    local handleButton = OrionUI.Button({ Parent = backBar, Size = UDim2.fromOffset(16, 16), Position = UDim2.fromScale((current - min) / (max - min), 0.5), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor = Library.Style.Text, CornerRadius = UDim.new(1, 0), Text = "" })
-    element.SetValue = function(newVal)
-        current = math.clamp(newVal, min, max)
-        local percent = (current - min) / (max - min)
-        fillBar:SetSize(UDim2.fromScale(percent, 1)); handleButton:SetPosition(UDim2.fromScale(percent, 0.5)); valueLabel:SetText(tostring(current) .. suffix)
-    end
-    local function updateSlider(inputPos)
-        local percent = math.clamp((inputPos.X - backBar.Instance.AbsolutePosition.X) / backBar.Instance.AbsoluteSize.X, 0, 1)
-        current = min + (max - min) * percent; if config.Integer then current = math.floor(current + 0.5) end
-        element.SetValue(current); if callback then callback(current) end
-    end
-    handleButton:OnEvent("MouseButton1Down", function() updateSlider(UserInputService:GetMouseLocation()); local m, u; m=UserInputService:GetMouseLocation().Changed:Connect(function() updateSlider(UserInputService:GetMouseLocation()) end); u=UserInputService.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then m:Disconnect();u:Disconnect() end end) end)
-    table.insert(Library.Elements, element)
-    return self
-end
-function Tab:CreateDropdown(config, callback)
-    local holder = self:_CreateComponentHolder(nil, config.Name); holder:SetProperty("ZIndex", 2)
-    local selectedValue, isOpen = config.Default or config.Options[1], false
-    local element = { Type = "Dropdown", Name = config.Name, GetValue = function() return selectedValue end }
-    OrionUI.Label({ Parent = holder, Size = UDim2.new(0.5, 0, 1, 0), Text = config.Name, TextColor = Library.Style.Text, Font = Library.Style.Font, TextXAlignment = Enum.TextXAlignment.Left, TextSize = 14 })
-    local dropdownButton = OrionUI.Button({ Parent = holder, Size = UDim2.new(0.45, 0, 1, 0), Position = UDim2.fromScale(1, 0.5), AnchorPoint = Vector2.new(1, 0.5), Text = tostring(selectedValue), TextColor = Library.Style.MutedText, BackgroundColor = Library.Style.LightBackground, Font = Library.Style.Font, TextSize = 13 })
-    element.SetValue = function(newVal) selectedValue = newVal; dropdownButton:SetText(tostring(selectedValue)) end
-    local optionsFrame, clickOutsideConn; local function closeDropdown() if not isOpen or not optionsFrame then return end; isOpen=false; optionsFrame:Destroy(); optionsFrame=nil; if clickOutsideConn then clickOutsideConn:Disconnect(); clickOutsideConn=nil end end
-    dropdownButton:OnClick(function()
-        if isOpen then closeDropdown(); return end; isOpen = true
-        optionsFrame = OrionUI.ScrollingFrame({ Parent = holder, Size = UDim2.new(0.45, 0, 0, math.min(#config.Options, 5) * (Library.Style.ComponentHeight + 5)), Position = UDim2.new(1, 0, 1, 5), AnchorPoint = Vector2.new(1, 0), BackgroundColor = Library.Style.LightBackground, ZIndex = 3, CanvasSize = UDim2.new(0,0,0, #config.Options * (Library.Style.ComponentHeight + 5)) })
-        local layout=Instance.new("UIListLayout"); layout.Padding=UDim.new(0,5); layout.Parent=optionsFrame.Instance
-        for _, option in ipairs(config.Options) do OrionUI.Button({ Parent=optionsFrame, Size=UDim2.new(1,0,0,Library.Style.ComponentHeight), Text=tostring(option), BackgroundColor=Library.Style.Background }):OnClick(function() element.SetValue(option); if callback then callback(option) end; closeDropdown() end) end
-        task.wait(); clickOutsideConn = UserInputService.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 and not optionsFrame.Instance:IsAncestorOf(i.Source) and i.Source ~= dropdownButton.Instance then closeDropdown() end end)
-    end)
-    table.insert(Library.Elements, element)
-    return self
+    return true
 end
 
---- [NEW IN PART 2] Creates a textbox for text input.
-function Tab:CreateTextBox(config, callback)
-    local holder = self:_CreateComponentHolder(nil, config.Name)
-    local text = config.Default or ""
-    local element = { Type = "TextBox", Name = config.Name, GetValue = function() return text end }
-    OrionUI.Label({ Parent=holder, Size=UDim2.new(0.4,0,1,0), Text=config.Name, Font=Library.Style.Font, TextColor=Library.Style.Text, TextSize=14, TextXAlignment=Enum.TextXAlignment.Left})
-    local textbox = OrionUI.TextBox({ Parent=holder, Size=UDim2.new(0.55,0,1,0), Position=UDim2.fromScale(1,0.5), AnchorPoint=Vector2.new(1,0.5), BackgroundColor=Library.Style.LightBackground, Text=text, PlaceholderText=config.Placeholder or "", TextColor=Library.Style.Text, Font=Library.Style.Font, TextSize=13, ClearTextOnFocus=false })
-    textbox:OnEvent("FocusLost", function() text = textbox:GetText(); if callback then callback(text) end end)
-    element.SetValue = function(newVal) text = newVal; textbox:SetText(text) end
-    table.insert(Library.Elements, element)
-    return self
+if not checkEnvironment() then
+    warn("[ZenithUILib] Incompatible environment detected. Library may not function as expected.")
 end
 
---- [NEW IN PART 2] Creates a button that waits for a key press.
-function Tab:CreateKeybind(config, callback)
-    local holder = self:_CreateComponentHolder(nil, config.Name)
-    local currentKey = config.Default or Enum.KeyCode.Unknown
-    local element = { Type = "Keybind", Name = config.Name, GetValue = function() return currentKey.Name end }
-    OrionUI.Label({ Parent=holder, Size=UDim2.new(0.6,0,1,0), Text=config.Name, Font=Library.Style.Font, TextColor=Library.Style.Text, TextSize=14, TextXAlignment=Enum.TextXAlignment.Left})
-    local keyButton = OrionUI.Button({ Parent=holder, Size=UDim2.new(0.35,0,1,0), Position=UDim2.fromScale(1,0.5), AnchorPoint=Vector2.new(1,0.5), Text=currentKey.Name, BackgroundColor=Library.Style.LightBackground, Font=Library.Style.BoldFont })
-    element.SetValue = function(newVal) currentKey = Enum.KeyCode[newVal]; keyButton:SetText(currentKey.Name) end
-    keyButton:OnClick(function(self) self:SetText("..."); local inputConn; inputConn = UserInputService.InputBegan:Connect(function(input, processed) if processed then return end; if input.UserInputType==Enum.UserInputType.Keyboard then element.SetValue(input.KeyCode.Name); if callback then callback(input.KeyCode) end; inputConn:Disconnect() end end) end)
-    table.insert(Library.Elements, element)
-    return self
-end
+--================================================================================================================================--
+--[[                                                      SHARED UTILITIES                                                      ]]--
+--================================================================================================================================--
 
---- [NEW IN PART 2] Creates a dropdown with checkboxes for multiple selections.
-function Tab:CreateMultiDropdown(config, callback)
-    local holder = self:_CreateComponentHolder(nil, config.Name); holder:SetProperty("ZIndex", 2)
-    local selectedValues = config.Default or {}
-    local element = { Type = "MultiDropdown", Name = config.Name, GetValue = function() return selectedValues end }
-    OrionUI.Label({ Parent = holder, Size = UDim2.new(0.5, 0, 1, 0), Text = config.Name, TextColor = Library.Style.Text, Font = Library.Style.Font, TextXAlignment = Enum.TextXAlignment.Left, TextSize = 14 })
-    local dropdownButton = OrionUI.Button({ Parent = holder, Size = UDim2.new(0.45, 0, 1, 0), Position = UDim2.fromScale(1, 0.5), AnchorPoint = Vector2.new(1, 0.5), Text = #selectedValues .. " Selected", TextColor = Library.Style.MutedText, BackgroundColor = Library.Style.LightBackground, Font = Library.Style.Font, TextSize = 13 })
-    element.SetValue = function(newValTable)
-        selectedValues = newValTable
-        dropdownButton:SetText(#selectedValues .. " Selected")
+-- Centralized logging
+local function logMessage(logType, message, debugMode)
+    if debugMode then
+        print(string.format("[ZenithUILib | %s] %s", logType, message))
     end
-    local function updateText() element.SetValue(selectedValues) end
-    local optionsFrame, isOpen; local function closeDropdown() if not isOpen then return end; isOpen=false; optionsFrame:Destroy() end
-    dropdownButton:OnClick(function()
-        if isOpen then closeDropdown(); return end; isOpen=true
-        optionsFrame = OrionUI.ScrollingFrame({ Parent=holder, Size=UDim2.new(0.45, 0, 0, math.min(#config.Options, 5)*(Library.Style.ComponentHeight+5)), Position=UDim2.new(1, 0, 1, 5), AnchorPoint=Vector2.new(1,0), BackgroundColor=Library.Style.LightBackground, ZIndex=3, CanvasSize=UDim2.new(0,0,0, #config.Options*(Library.Style.ComponentHeight+5)) })
-        local layout=Instance.new("UIListLayout"); layout.Padding=UDim.new(0,5); layout.Parent=optionsFrame.Instance
-        for _, option in ipairs(config.Options) do
-            local itemHolder = OrionUI.Frame({Parent=optionsFrame, Size=UDim2.new(1,0,0,Library.Style.ComponentHeight), BackgroundTransparency=1})
-            local checkbox = OrionUI.Button({ Parent=itemHolder, Size=UDim2.fromOffset(20,20), Position=UDim2.fromScale(0,0.5), AnchorPoint=Vector2.new(0,0.5), BackgroundColor=Library.Style.Background, Text=""})
-            local check = OrionUI.Frame({Parent=checkbox, Size=UDim2.fromScale(0.7,0.7), Position=UDim2.fromScale(0.5,0.5), AnchorPoint=Vector2.new(0.5,0.5), BackgroundColor=Library.Style.Accent, Visible=table.find(selectedValues, option) ~= nil})
-            OrionUI.Label({Parent=itemHolder, Size=UDim2.new(1,-30,1,0), Position=UDim2.fromOffset(30,0), Text=tostring(option), TextColor=Library.Style.Text, TextXAlignment=Enum.TextXAlignment.Left})
-            checkbox:OnClick(function()
-                local index = table.find(selectedValues, option)
-                if index then table.remove(selectedValues, index); check.Instance.Visible = false else table.insert(selectedValues, option); check.Instance.Visible = true end
-                updateText(); if callback then callback(selectedValues) end
+end
+
+-- Simplified JSON encoder/decoder
+local Json = {}
+do
+    local escapeChars = { ['\\'] = '\\\\', ['"'] = '\\"', ['\b'] = '\\b', ['\f'] = '\\f', ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t' }
+    local function encodeString(s) return '"' .. s:gsub('[%c"\\]', escapeChars) .. '"' end
+    local function encodeValue(val, stack)
+        stack = stack or {}
+        if stack[val] then error("Circular reference detected") end
+        stack[val] = true
+        local t = type(val)
+        if t == "string" then return encodeString(val) end
+        if t == "number" then return (val == val and val ~= math.huge and val ~= -math.huge) and tostring(val) or "null" end
+        if t == "boolean" then return tostring(val) end
+        if t == "nil" then return "null" end
+        if t == "table" then
+            local res, isArray = {}, rawget(val, 1) ~= nil or next(val) == nil
+            if isArray then
+                for i = 1, #val do res[i] = encodeValue(val[i], stack) end
+                return "[" .. table.concat(res, ",") .. "]"
+            else
+                for k, v in pairs(val) do table.insert(res, encodeString(tostring(k)) .. ":" .. encodeValue(v, stack)) end
+                return "{" .. table.concat(res, ",") .. "}"
+            end
+        end
+        error("Unsupported type: " .. t)
+    end
+    Json.encode = function(val) return encodeValue(val) end
+    Json.decode = function(str)
+        local func = loadstring("return " .. str)
+        if func then return pcall(func) end
+        return false, nil
+    end
+end
+
+-- Tween utility
+local function tween(instance, properties, duration, easingStyle, easingDirection)
+    easingStyle = easingStyle or Enum.EasingStyle.Quad
+    easingDirection = easingDirection or Enum.EasingDirection.Out
+    local tweenInfo = TweenInfo.new(duration, easingStyle, easingDirection)
+    local tween = TweenService:Create(instance, tweenInfo, properties)
+    tween:Play()
+    return tween
+end
+
+--================================================================================================================================--
+--[[                                                     ZENITH UI LIBRARY                                                     ]]--
+--================================================================================================================================--
+
+local ZenithUILib = {}
+ZenithUILib.__index = ZenithUILib
+
+function ZenithUILib.new(config)
+    config = config or {}
+    local self = setmetatable({}, ZenithUILib)
+    self.title = config.title or "ZenithUILib"
+    self.size = config.size or UDim2.new(0, 600, 0, 400)
+    self.debugMode = config.debugMode or false
+    self.toggleKey = config.toggleKey or Enum.KeyCode.End
+    self.tabs = {}
+    self.config = {}
+    self.gui = Instance.new("ScreenGui")
+    self.gui.Name = "ZenithUILib"
+    self.gui.ResetOnSpawn = false
+    self.gui.Parent = game:GetService("CoreGui")
+    self.gui.Enabled = true
+
+    -- Main window
+    self.mainFrame = Instance.new("Frame")
+    self.mainFrame.Size = self.size
+    self.mainFrame.Position = UDim2.new(0.5, -self.size.X.Offset / 2, 0.5, -self.size.Y.Offset / 2)
+    self.mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    self.mainFrame.BorderSizePixel = 0
+    self.mainFrame.Parent = self.gui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = self.mainFrame
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(60, 60, 60)
+    stroke.Thickness = 1
+    stroke.Parent = self.mainFrame
+
+    -- Title bar
+    self.titleBar = Instance.new("Frame")
+    self.titleBar.Size = UDim2.new(1, 0, 0, 30)
+    self.titleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    self.titleBar.BorderSizePixel = 0
+    self.titleBar.Parent = self.mainFrame
+
+    local titleCorner = Instance.new("UICorner")
+    titleCorner.CornerRadius = UDim.new(0, 8)
+    titleCorner.Parent = self.titleBar
+
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(1, -10, 1, 0)
+    titleLabel.Position = UDim2.new(0, 5, 0, 0)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = self.title
+    titleLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    titleLabel.TextSize = 16
+    titleLabel.Font = Enum.Font.SourceSansBold
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.Parent = self.titleBar
+
+    -- Dragging logic
+    local dragging, dragInput, dragStart, startPos
+    self.titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = self.mainFrame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
             end)
         end
     end)
-    table.insert(Library.Elements, element)
-    return self
-end
 
---- [NEW IN PART 2] Creates a full color picker component.
-function Tab:CreateColorPicker(config, callback)
-    local holder = self:_CreateComponentHolder(180, config.Name); holder:SetProperty("ZIndex", 2)
-    local currentColor = config.Default or Color3.new(1,1,1)
-    local element = { Type = "ColorPicker", Name = config.Name, GetValue = function() return {currentColor.r, currentColor.g, currentColor.b} end }
-    OrionUI.Label({ Parent=holder, Size=UDim2.new(0.5,0,0,20), Text=config.Name, Font=Library.Style.Font, TextColor=Library.Style.Text, TextXAlignment=Enum.TextXAlignment.Left })
-    local preview = OrionUI.Frame({ Parent=holder, Size=UDim2.fromOffset(30,30), Position=UDim2.fromScale(1,0), AnchorPoint=Vector2.new(1,0), BackgroundColor=currentColor })
-    
-    local pickerFrame = OrionUI.Frame({ Parent=holder, Size=UDim2.new(1,0,1,-40), Position=UDim2.fromScale(0,1), AnchorPoint=Vector2.new(0,1) })
-    local colorSquare = OrionUI.Frame({ Parent=pickerFrame, Size=UDim2.new(1,-40,1,0), BackgroundColor=Color3.new(1,0,0) }); OrionUI.Frame({Parent=colorSquare, Name="WhiteGrad", Size=UDim2.fromScale(1,1), BackgroundColor=Color3.new(1,1,1), BackgroundTransparency=1, Gradient=UDim2.new(0,1,0,0)}); OrionUI.Frame({Parent=colorSquare, Name="BlackGrad", Size=UDim2.fromScale(1,1), BackgroundColor=Color3.new(0,0,0), BackgroundTransparency=1, Gradient=UDim2.new(0,0,0,1)})
-    local hueSlider = OrionUI.Frame({ Parent=pickerFrame, Size=UDim2.new(0,20,1,0), Position=UDim2.fromScale(1,0), AnchorPoint=Vector2.new(1,0), BackgroundColor=Color3.new(1,1,1), Gradient=UDim2.new(0,0,1,0) }) -- Hue gradient texture here
-    local squareCursor = OrionUI.Frame({Parent=colorSquare, Size=UDim2.fromOffset(10,10), BackgroundColor=Color3.new(1,1,1), BorderSizePixel=2, BorderColor3=Color3.new(0,0,0), ZIndex=3})
-    local hueCursor = OrionUI.Frame({Parent=hueSlider, Size=UDim2.new(1.4,0,0,4), Position=UDim2.fromScale(0.5,0), AnchorPoint=Vector2.new(0.5,0.5), BackgroundColor=Color3.new(1,1,1), BorderSizePixel=1, BorderColor3=Color3.new(0,0,0), ZIndex=3})
-    
-    local hue, sat, val = Color3.toHSV(currentColor)
-    local function updateColor()
-        currentColor = Color3.fromHSV(hue, sat, val); colorSquare.Instance.BackgroundColor3 = Color3.fromHSV(hue, 1, 1); preview.Instance.BackgroundColor3 = currentColor; if callback then callback(currentColor) end
-    end
-    element.SetValue = function(newVal) local r,g,b = table.unpack(newVal); currentColor=Color3.new(r,g,b); hue,sat,val=Color3.toHSV(currentColor); updateColor() end
-    -- Logic for moving cursors and updating HSV would be complex and lengthy, connecting MouseButton1Down on colorSquare and hueSlider.
-    -- For brevity, this part is simplified but the structure is present.
-    table.insert(Library.Elements, element)
-    return self
-end
-
-
---//================================================================================================//
---//                                        WINDOW CLASS                                            //
---//================================================================================================//
-Window = {}
-Window.__index = Window
-function Window.new(config)
-    local self = setmetatable({}, Window)
-    self.Title = config.Name or "Starlight"; self.Tabs={}; self.TabButtons={}; self.ActiveTab=nil
-    self.OrionWindow = OrionUI.Window({ Title="", Size=config.Size or UDim2.fromOffset(550,450), Position=UDim2.fromScale(0.5,0.5), AnchorPoint=Vector2.new(0.5,0.5) })
-    self.OrionWindow.Instance.BackgroundColor3 = Library.Style.Background; self.OrionWindow.TitleBar:SetBackgroundColor(Library.Style.Background); self.OrionWindow.CloseButton:SetBackgroundColor(Library.Style.Background)
-    self.TitleLabel = OrionUI.Label({ Parent=self.OrionWindow.TitleBar, Size=UDim2.new(1,0,1,0), Text=self.Title, Font=Library.Style.TitleFont, TextColor=Library.Style.Accent, TextSize=18 })
-    self.TabContainer = OrionUI.Frame({ Parent=self.OrionWindow, Name="TabContainer", Size=UDim2.new(1,-20,0,30), Position=UDim2.fromOffset(10,40), BackgroundTransparency=1 }); local l=Instance.new("UIListLayout");l.FillDirection=Enum.FillDirection.Horizontal;l.Padding=UDim.new(0,10);l.Parent=self.TabContainer.Instance
-    self.PageContainer = OrionUI.Frame({ Parent=self.OrionWindow, Name="PageContainer", Size=UDim2.new(1,0,1,-80), Position=UDim2.fromOffset(0,80), BackgroundTransparency=1 })
-    table.insert(Library.Elements, {Type="Window", Instance=self.OrionWindow}); table.insert(Library.Elements, {Type="AccentText", Instance=self.TitleLabel})
-    Library.Window = self
-    return self
-end
-function Window:SwitchToTab(tab)
-    if self.ActiveTab == tab then return end; if self.ActiveTab then self.ActiveTab.Container:SetProperty("Visible",false); self.TabButtons[self.ActiveTab.Name]:SetTextColor(Library.Style.MutedText) end
-    tab.Container:SetProperty("Visible",true); self.TabButtons[tab.Name]:SetTextColor(Library.Style.Accent); self.ActiveTab=tab
-end
-function Window:CreateTab(name)
-    local tab = Tab.new(name, self); self.Tabs[name]=tab
-    local btn = OrionUI.Button({Parent=self.TabContainer, Name=name, Size=UDim2.new(0,0,1,0), BackgroundTransparency=1, Text=name, Font=Library.Style.BoldFont, TextSize=16, TextColor=Library.Style.MutedText, AutoButtonColor=false}); btn.Instance.AutomaticSize=Enum.AutomaticSize.X; self.TabButtons[name]=btn
-    btn:OnClick(function() self:SwitchToTab(tab) end)
-    if not self.ActiveTab then self:SwitchToTab(tab) end; return tab
-end
-function Window:Toggle(key)
-    self.OrionWindow.Instance.Visible = not self.OrionWindow.Instance.Visible
-    if key then UserInputService.InputBegan:Connect(function(i,p) if not p and i.KeyCode == key then self.OrionWindow.Instance.Visible = not self.OrionWindow.Instance.Visible end end) end
-end
-
---//================================================================================================//
---//                                CONFIGURATION & THEME SYSTEM                                    //
---//================================================================================================//
-function Library:UpdateTheme()
-    -- This function would iterate through Library.Elements and apply the current Library.Style
-    -- For example:
-    -- for _, element in ipairs(Library.Elements) do
-    --     if element.Type == "Button" then element.Instance:SetBackgroundColor(Library.Style.LightBackground) end
-    --     if element.Type == "AccentText" then element.Instance:SetTextColor(Library.Style.Accent) end
-    -- end
-    -- Due to complexity, this is a conceptual placeholder. The real implementation would be a large switch statement.
-end
-function Library:SaveConfig()
-    if not writefile then warn("Starlight: `writefile` is not available. Config not saved."); return end
-    local configData = {}
-    for _, element in ipairs(Library.Elements) do
-        if element.GetValue then configData[element.Name] = element.GetValue() end
-    end
-    pcall(function()
-        if not isfolder(Library.Config.SavePath) then makefolder(Library.Config.SavePath) end
-        local fullPath = Library.Config.SavePath .. "/" .. Library.Config.Version .. "_" .. Library.Config.FileName
-        writefile(fullPath, HttpService:JSONEncode(configData))
-        print("Starlight config saved to:", fullPath)
+    self.titleBar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
+            local delta = input.Position - dragStart
+            self.mainFrame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
     end)
+
+    -- Tab bar
+    self.tabBar = Instance.new("Frame")
+    self.tabBar.Size = UDim2.new(1, 0, 0, 30)
+    self.tabBar.Position = UDim2.new(0, 0, 0, 30)
+    self.tabBar.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    self.tabBar.BorderSizePixel = 0
+    self.tabBar.Parent = self.mainFrame
+
+    -- Content area
+    self.contentFrame = Instance.new("Frame")
+    self.contentFrame.Size = UDim2.new(1, -10, 1, -70)
+    self.contentFrame.Position = UDim2.new(0, 5, 0, 65)
+    self.contentFrame.BackgroundTransparency = 1
+    self.contentFrame.Parent = self.mainFrame
+
+    -- Toggle GUI
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if not gameProcessed and input.KeyCode == self.toggleKey then
+            self.gui.Enabled = not self.gui.Enabled
+            logMessage("INFO", "GUI toggled: " .. tostring(self.gui.Enabled), self.debugMode)
+        end
+    end)
+
+    return self
 end
-function Library:LoadConfig()
-    if not readfile then warn("Starlight: `readfile` is not available. Config not loaded."); return end
-    local fullPath = Library.Config.SavePath .. "/" .. Library.Config.Version .. "_" .. Library.Config.FileName
-    if not isfile(fullPath) then warn("Starlight: No config file found at", fullPath); return end
-    local success, data = pcall(function() return HttpService:JSONDecode(readfile(fullPath)) end)
-    if not success or not data then warn("Starlight: Failed to load or decode config file."); return end
-    for _, element in ipairs(Library.Elements) do
-        if element.SetValue and data[element.Name] ~= nil then element.SetValue(data[element.Name]) end
+
+function ZenithUILib:AddTab(name)
+    local tab = {}
+    tab.name = name
+    tab.frame = Instance.new("Frame")
+    tab.frame.Size = UDim2.new(1, 0, 1, 0)
+    tab.frame.BackgroundTransparency = 1
+    tab.frame.Visible = false
+    tab.frame.Parent = self.contentFrame
+    tab.elements = {}
+    tab.contentHeight = 0
+
+    -- Auto-scrolling frame
+    tab.scrollFrame = Instance.new("ScrollingFrame")
+    tab.scrollFrame.Size = UDim2.new(1, 0, 1, 0)
+    tab.scrollFrame.Position = UDim2.new(0, 0, 0, 0)
+    tab.scrollFrame.BackgroundTransparency = 1
+    tab.scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+    tab.scrollFrame.ScrollBarThickness = 6
+    tab.scrollFrame.Visible = false
+    tab.scrollFrame.Parent = tab.frame
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 5)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = self.debugMode and tab.frame or tab.scrollFrame
+
+    -- Tab button
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(0, 100, 1, 0)
+    button.Position = UDim2.new(0, #self.tabs * 100, 0, 0)
+    button.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    button.Text = name
+    button.TextColor3 = Color3.fromRGB(150, 150, 150)
+    button.TextSize = 14
+    button.Font = Enum.Font.SourceSans
+    button.BorderSizePixel = 0
+    button.Parent = self.tabBar
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(60, 60, 60)
+    stroke.Thickness = 1
+    stroke.Parent = button
+
+    button.MouseButton1Click:Connect(function()
+        for _, t in pairs(self.tabs) do
+            t.frame.Visible = t.name == name
+            t.scrollFrame.Visible = t.name == name and t.contentHeight > self.contentFrame.AbsoluteSize.Y
+            tween(t.frame, { BackgroundTransparency = t.name == name and 1 or 0.5 }, 0.2)
+        end
+        for _, btn in ipairs(self.tabBar:GetChildren()) do
+            if btn:IsA("TextButton") then
+                tween(btn, {
+                    BackgroundColor3 = btn.Text == name and Color3.fromRGB(50, 50, 50) or Color3.fromRGB(35, 35, 35),
+                    TextColor3 = btn.Text == name and Color3.fromRGB(200, 200, 200) or Color3.fromRGB(150, 150, 150)
+                }, 0.2)
+            end
+        end
+        logMessage("INFO", "Switched to tab: " .. name, self.debugMode)
+    end)
+
+    button.MouseEnter:Connect(function()
+        if button.Text ~= name or not self.tabs[name].frame.Visible then
+            tween(button, { BackgroundColor3 = Color3.fromRGB(45, 45, 45) }, 0.1)
+        end
+    end)
+
+    button.MouseLeave:Connect(function()
+        if button.Text ~= name or not self.tabs[name].frame.Visible then
+            tween(button, { BackgroundColor3 = Color3.fromRGB(35, 35, 35) }, 0.1)
+        end
+    end)
+
+    self.tabs[name] = tab
+    if #self.tabs == 1 then
+        button:MouseButton1Click()
     end
-    print("Starlight config loaded.")
+    return tab
 end
 
---//================================================================================================//
---//                                        PUBLIC API                                              //
---//================================================================================================//
-function Library:CreateWindow(config)
-    assert(Initialized, "Starlight has not been initialized. Call Starlight:Init() first.")
-    if Library.Window then warn("Starlight currently only supports one window. Returning existing window."); return Library.Window end
-    local window = Window.new(config or {})
-    local settingsTab = window:CreateTab("Settings")
-    settingsTab:CreateLabel("Theme")
-    settingsTab:CreateColorPicker({Name = "Accent Color", Default=Library.Style.Accent}, function(c) Library.Style.Accent = c; Library:UpdateTheme() end)
-    settingsTab:CreateDivider()
-    settingsTab:CreateLabel("Configuration")
-    settingsTab:CreateButton({Name = "Save Config"}, function() Library:SaveConfig() end)
-    settingsTab:CreateButton({Name = "Load Config"}, function() Library:LoadConfig() end)
-    -- Put settings tab at the end
-    settingsTab.Container.Parent.LayoutOrder = 9e9
-    return window
-end
-function Library:Init()
-    if Initialized then return end
-    PlayerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
-    OrionUI:Init(PlayerGui)
-    Initialized = true
-    -- Auto-load config on init if available
-    task.wait(1) -- Wait for UI to be created
-    Library:LoadConfig()
+function ZenithUILib:AddButton(name, callback)
+    local tab = self.tabs[name]
+    if not tab then
+        logMessage("ERROR", "Tab not found: " .. tostring(name), self.debugMode)
+        return
+    end
+
+    local buttonFrame = self.debugMode and Instance.new("Frame") or tab.scrollFrame
+    if self.debugMode then
+        buttonFrame.Size = UDim2.new(0, 150, 1, 0)
+        buttonFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        buttonFrame.Parent = tab.frame
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = buttonFrame
+        local layout = Instance.new("UIListLayout")
+        layout.Padding = UDim.new(0, 5)
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.Parent = buttonFrame
+    end
+
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(1, -10, 0, 30)
+    button.Position = UDim2.new(0, 5, 0, 0)
+    button.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    button.Text = name
+    button.TextColor3 = Color3.fromRGB(200, 200, 200)
+    button.TextSize = 14
+    button.Font = Enum.Font.SourceSans
+    button.Parent = self.debugMode and buttonFrame or tab.scrollFrame
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 4)
+    corner.Parent = button
+
+    button.MouseButton1Click:Connect(function()
+        tween(button, { Size = UDim2.new(1, -12, 0, 28) }, 0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.In):Wait()
+        tween(button, { Size = UDim2.new(1, -10, 0, 30) }, 0.1)
+        if callback then callback() end
+    end)
+
+    button.MouseEnter:Connect(function()
+        tween(button, { BackgroundColor3 = Color3.fromRGB(60, 60, 60) }, 0.1)
+    end)
+
+    button.MouseLeave:Connect(function()
+        tween(button, { BackgroundColor3 = Color3.fromRGB(50, 50, 50) }, 0.1)
+    end)
+
+    tab.contentHeight = tab.contentHeight + 35
+    tab.scrollFrame.Visible = tab.contentHeight > self.contentFrame.AbsoluteSize.Y
+    tab.scrollFrame.CanvasSize = UDim2.new(0, 0, 0, tab.contentHeight)
+    table.insert(tab.elements, { type = "button", name = name })
 end
 
-return Library
+function ZenithUILib:AddToggle(name, default, callback)
+    local tab = self.tabs[name]
+    if not tab then
+        logMessage("ERROR", "Tab not found: " .. tostring(name), self.debugMode)
+        return
+    end
+
+    local buttonFrame = self.debugMode and Instance.new("Frame") or tab.scrollFrame
+    if self.debugMode and not buttonFrame.Parent then
+        buttonFrame.Size = UDim2.new(0, 150, 1, 0)
+        buttonFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        buttonFrame.Parent = tab.frame
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = buttonFrame
+        local layout = Instance.new("UIListLayout")
+        layout.Padding = UDim.new(0, 5)
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.Parent = buttonFrame
+    end
+
+    local toggle = Instance.new("TextButton")
+    toggle.Size = UDim2.new(1, -10, 0, 30)
+    toggle.Position = UDim2.new(0, 5, 0, 0)
+    toggle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    toggle.Text = name .. ": " .. (default and "ON" or "OFF")
+    toggle.TextColor3 = Color3.fromRGB(200, 200, 200)
+    toggle.TextSize = 14
+    toggle.Font = Enum.Font.SourceSans
+    toggle.Parent = self.debugMode and buttonFrame or tab.scrollFrame
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 4)
+    corner.Parent = toggle
+
+    local state = default
+    toggle.MouseButton1Click:Connect(function()
+        state = not state
+        toggle.Text = name .. ": " .. (state and "ON" or "OFF")
+        tween(toggle, { Size = UDim2.new(1, -12, 0, 28) }, 0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.In):Wait()
+        tween(toggle, { Size = UDim2.new(1, -10, 0, 30) }, 0.1)
+        if callback then callback(state) end
+        self.config[name] = state
+        logMessage("INFO", "Toggle " .. name .. " set to " .. tostring(state), self.debugMode)
+    end)
+
+    toggle.MouseEnter:Connect(function()
+        tween(toggle, { BackgroundColor3 = Color3.fromRGB(60, 60, 60) }, 0.1)
+    end)
+
+    toggle.MouseLeave:Connect(function()
+        tween(toggle, { BackgroundColor3 = Color3.fromRGB(50, 50, 50) }, 0.1)
+    end)
+
+    self.config[name] = default
+    tab.contentHeight = tab.contentHeight + 35
+    tab.scrollFrame.Visible = tab.contentHeight > self.contentFrame.AbsoluteSize.Y
+    tab.scrollFrame.CanvasSize = UDim2.new(0, 0, 0, tab.contentHeight)
+    table.insert(tab.elements, { type = "toggle", name = name, instance = toggle })
+end
+
+function ZenithUILib:AddTextBox(name, default, callback)
+    local tab = self.tabs[name]
+    if not tab then
+        logMessage("ERROR", "Tab not found: " .. tostring(name), self.debugMode)
+        return
+    end
+
+    local textFrame = Instance.new("Frame")
+    textFrame.Size = UDim2.new(1, -10, 0, 100)
+    textFrame.Position = UDim2.new(0, 5, 0, 0)
+    textFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    textFrame.Parent = tab.scrollFrame
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = textFrame
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -10, 0, 20)
+    label.Position = UDim2.new(0, 5, 0, 5)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    label.TextSize = 14
+    label.Font = Enum.Font.SourceSans
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = textFrame
+
+    local textBox = Instance.new("TextBox")
+    textBox.Size = UDim2.new(1, -10, 0, 70)
+    textBox.Position = UDim2.new(0, 5, 0, 25)
+    textBox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    textBox.Text = default or ""
+    textBox.PlaceholderText = "Enter text..."
+    textBox.TextColor3 = Color3.fromRGB(200, 200, 200)
+    textBox.TextSize = 14
+    textBox.Font = Enum.Font.Code
+    textBox.MultiLine = true
+    textBox.TextXAlignment = Enum.TextXAlignment.Left
+    textBox.TextYAlignment = Enum.TextYAlignment.Top
+    textBox.ClearTextOnFocus = false
+    textBox.Parent = textFrame
+
+    local corner2 = Instance.new("UICorner")
+    corner2.CornerRadius = UDim.new(0, 4)
+    corner2.Parent = textBox
+
+    local lastInput = tick()
+    textBox:GetPropertyChangedSignal("Text"):Connect(function()
+        if tick() - lastInput < 0.1 then return end
+        lastInput = tick()
+        self.config[name] = textBox.Text
+        if callback then callback(textBox.Text) end
+    end)
+
+    tab.contentHeight = tab.contentHeight + 105
+    tab.scrollFrame.Visible = tab.contentHeight > self.contentFrame.AbsoluteSize.Y
+    tab.scrollFrame.CanvasSize = UDim2.new(0, 0, 0, tab.contentHeight)
+    table.insert(tab.elements, { type = "textbox", name = name, instance = textBox })
+end
+
+function ZenithUILib:SaveConfig()
+    if not writefile then
+        logMessage("ERROR", "Config saving failed: 'writefile' unavailable", self.debugMode)
+        return
+    end
+    local success, result = pcall(Json.encode, self.config)
+    if success then
+        pcall(function()
+            writefile("zenith_ui_config.json", result)
+            logMessage("SUCCESS", "Config saved to zenith_ui_config.json", self.debugMode)
+        end)
+    else
+        logMessage("ERROR", "Config encoding failed: " .. tostring(result), self.debugMode)
+    end
+end
+
+function ZenithUILib:LoadConfig()
+    if not readfile then
+        logMessage("ERROR", "Config loading failed: 'readfile' unavailable", self.debugMode)
+        return
+    end
+    local success, content = pcall(readfile, "zenith_ui_config.json")
+    if not success then
+        logMessage("ERROR", "Failed to read config: " .. tostring(content), self.debugMode)
+        return
+    end
+    local success, config = Json.decode(content)
+    if not success then
+        logMessage("ERROR", "Failed to decode config: " .. tostring(config), self.debugMode)
+        return
+    end
+    self.config = config or {}
+    for tabName, tab in pairs(self.tabs) do
+        for _, element in ipairs(tab.elements) do
+            if element.type == "toggle" and config[element.name] ~= nil then
+                element.instance.Text = element.name .. ": " .. (config[element.name] and "ON" or "OFF")
+            elseif element.type == "textbox" and config[element.name] ~= nil then
+                element.instance.Text = config[element.name]
+            end
+        end
+    end
+    logMessage("SUCCESS", "Config loaded from zenith_ui_config.json", self.debugMode)
+end
+
+function ZenithUILib:Destroy()
+    self.gui:Destroy()
+    logMessage("INFO", "ZenithUILib destroyed", self.debugMode)
+end
+
+--================================================================================================================================--
+--[[                                                         FINALIZATION                                                       ]]--
+--================================================================================================================================--
+
+logMessage("SUCCESS", "ZenithUILib v1.0 loaded successfully", true)
+return ZenithUILib
