@@ -1,7 +1,7 @@
 --[[
     Universal ESP Library for Roblox
     Version: 1.0.0
-    Author: Sigma Alexchad 
+    Author: Sigma Alexchad
     Lines: ~950
 
     Features:
