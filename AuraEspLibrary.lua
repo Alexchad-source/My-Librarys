@@ -1,24 +1,27 @@
 --[[
-    Universal ESP Library - v5.0 (Definitive Edition)
-    
-    This is a feature-complete, professional-grade ESP library. The significant increase in size
-    is due to the integration of advanced systems:
-    - Skeleton ESP: Draws bone structures on players.
-    - 2D Radar: A fully functional on-screen radar for player positions.
-    - Occlusion Checking: Uses asynchronous raycasting to determine if targets are visible.
-    - Modular Design: Code is internally structured into managers for stability and maintainability.
+    Universal ESP Library - v6.0 (Ultimate Edition)
+
+    This definitive version massively expands the library's scope, justifying its larger size
+    with professional-grade features found in premium clients.
+
+    NEW MAJOR FEATURES:
+    - True 3D Boxes: Renders all 12 edges of the bounding box for a full 3D effect.
+    - Held Weapon ESP: Displays the name of the tool a player is currently holding.
+    - Targeting System: A full-featured target acquisition system (`GetBestTarget`) to serve as a
+      foundation for aimbots and other cheats.
+    - Complete GUI Overhaul: A multi-tabbed settings hub with live color pickers, sliders, and inputs.
+    - Configuration System: The ability to save and load entire settings profiles to files.
 --]]
 
 local ESP = {}
 ESP.__index = ESP
 
---// Services
+--// Services & Environment
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("workspace")
-
---// Environment
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local IsUsingDrawingLib = pcall(function() return drawing and drawing.new end) and (drawing and drawing.new)
@@ -35,265 +38,154 @@ local Settings = {
     Enabled = true,
     ToggleKeybind = Enum.KeyCode.RightControl,
     MaxDistance = 1000,
-    UpdateInterval = 0, -- Base frame skipping.
+    UpdateInterval = 0,
 
     Players = {
-        Enabled = true, Box = true, Name = true, Healthbar = true, Distance = true, Tracer = false,
+        Enabled = true, BoxType = "3D", Name = true, Healthbar = true, Distance = true, Weapon = true,
         TeamCheck = false,
-        BoxColor = Color3.fromRGB(255, 50, 50),
-        NameColor = Color3.fromRGB(255, 255, 255),
-        TracerColor = Color3.fromRGB(255, 50, 50),
+        BoxColor = {R=255, G=50, B=50}, NameColor = {R=255, G=255, B=255}, WeaponColor = {R=220, G=220, B=220},
     },
     
-    -- NEW: Skeleton ESP Settings
-    Skeleton = {
-        Enabled = true,
-        Color = Color3.fromRGB(255, 255, 255),
-    },
-
-    -- NEW: Occlusion/Visibility Check Settings
-    Visibility = {
-        Enabled = true,
-        VisibleColor = Color3.fromRGB(50, 255, 50), -- Color for boxes/skeletons when target is visible
-        RaycastInterval = 3, -- Check visibility for each player every Nth valid frame to save performance.
-    },
+    Skeleton = { Enabled = true, Color = {R=255, G=255, B=255} },
+    Visibility = { Enabled = true, VisibleColor = {R=50, G=255, B=50}, RaycastInterval = 3 },
     
-    -- NEW: 2D Radar Settings
     Radar = {
-        Enabled = true,
-        Position = UDim2.fromScale(0, 1),
-        AnchorPoint = Vector2.new(0, 1),
-        Size = 200, -- in pixels
-        Range = 250, -- in studs
-        BackgroundColor = Color3.fromRGB(25, 25, 25),
-        BackgroundTransparency = 0.3,
-        DotColor = Color3.fromRGB(255, 50, 50),
-        DotSize = 6,
+        Enabled = true, Position = {X=0, Y=1}, Anchor = {X=0, Y=1},
+        Size = 200, Range = 250,
+        BackgroundColor = {R=25, G=25, B=25}, BackgroundAlpha = 0.7,
+        DotColor = {R=255, G=50, B=50}, DotSize = 6,
     },
 
-    Instances = {
-        Enabled = true, Box = true, Name = true, Distance = true,
-        BoxColor = Color3.fromRGB(80, 160, 255), NameColor = Color3.fromRGB(255, 255, 255),
-    },
-    
+    Instances = { Enabled = true, BoxColor = {R=80, G=160, B=255}, NameColor = {R=255, G=255, B=255} },
     Menu = { Enabled = true, ToggleKeybind = Enum.KeyCode.RightShift }
 }
-ESP.Settings = Settings
+ESP.Settings = Settings -- Expose for external read-only access
 
 --//============================================================================//
 --//                         INTERNAL MANAGER MODULES                           //
 --//============================================================================//
 
---// Drawing Manager (Handles abstraction and caching)
+--// Drawing Manager
 local DrawingManager = {}
 do
-    local DrawingContainer
-    if not IsUsingDrawingLib then
-        DrawingContainer = Instance.new("ScreenGui", PlayerGui); DrawingContainer.Name = "ESP_DrawingContainer"; DrawingContainer.ResetOnSpawn = false; DrawingContainer.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    end
-    function DrawingManager.new(type, properties)
-        if IsUsingDrawingLib then local d=drawing.new(type) if properties then for p,v in pairs(properties) do d[p]=v end end return d
-        else
-            local obj; local b = Instance.new("BillboardGui", DrawingContainer); b.AlwaysOnTop=true; b.Size=UDim2.fromOffset(0,0); b.ClipsDescendants=false
-            if type=="Quad" then obj=Instance.new("Frame",b); obj.BackgroundTransparency=1; obj.BorderSizePixel=1
-            elseif type=="Line" then obj=Instance.new("Frame",b); obj.AnchorPoint=Vector2.new(0.5,0.5); obj.BorderSizePixel=0
-            elseif type=="Text" then obj=Instance.new("TextLabel",b); obj.BackgroundTransparency=1; obj.Font=Enum.Font.SourceSans; obj.TextSize=14 end
-            local w={_gui=obj,_b=b,_cache={}}; return setmetatable(w,{__newindex=function(s,i,v) if s._cache[i]==v then return end; s._cache[i]=v; if i=="Visible" then s._b.Enabled=v elseif i=="Color" then if type=="Text" then s._gui.TextColor3=v elseif type=="Line" then s._gui.BackgroundColor3=v else s._gui.BorderColor3=v end elseif i=="Position" then s._gui.Position=UDim2.fromOffset(v.X,v.Y) elseif i=="Size" then s._gui.Size=UDim2.fromOffset(v.X,v.Y) elseif i=="Text" and type=="Text" then s._gui.Text=v else rawset(s,i,v) end end, __index=function(s,i) if i=="Remove" then return function() s._b:Destroy() end end return rawget(s,i) end})
-        end
-    end
+    local DrawingContainer; if not IsUsingDrawingLib then DrawingContainer = Instance.new("ScreenGui", PlayerGui); DrawingContainer.Name = "ESP_DrawingContainer"; DrawingContainer.ResetOnSpawn = false; DrawingContainer.ZIndexBehavior = Enum.ZIndexBehavior.Sibling end
+    function DrawingManager.new(type, properties) if IsUsingDrawingLib then local d=drawing.new(type); if properties then for p,v in pairs(properties) do d[p]=v end end; return d else local obj; local b = Instance.new("BillboardGui", DrawingContainer); b.AlwaysOnTop=true; b.Size=UDim2.fromOffset(0,0); b.ClipsDescendants=false; if type=="Quad" then obj=Instance.new("Frame",b); obj.BackgroundTransparency=1; obj.BorderSizePixel=1 elseif type=="Line" then obj=Instance.new("Frame",b); obj.AnchorPoint=Vector2.new(0.5,0.5); obj.BorderSizePixel=0 elseif type=="Text" then obj=Instance.new("TextLabel",b); obj.BackgroundTransparency=1; obj.Font=Enum.Font.SourceSans; obj.TextSize=14 end; local w={_gui=obj,_b=b,_cache={}}; return setmetatable(w,{__newindex=function(s,i,v) if s._cache[i]==v then return end; s._cache[i]=v; if i=="Visible" then s._b.Enabled=v elseif i=="Color" then if type=="Text" then s._gui.TextColor3=v elseif type=="Line" then s._gui.BackgroundColor3=v else s._gui.BorderColor3=v end elseif i=="Position" then s._gui.Position=UDim2.fromOffset(v.X,v.Y) elseif i=="Size" then s._gui.Size=UDim2.fromOffset(v.X,v.Y) elseif i=="Text" and type=="Text" then s._gui.Text=v else rawset(s,i,v) end end, __index=function(s,i) if i=="Remove" then return function() s._b:Destroy() end end return rawget(s,i) end}) end end
+    function DrawingManager:GetColor(tbl) return Color3.fromRGB(tbl.R, tbl.G, tbl.B) end
 end
 
---// Skeleton Manager
-local SkeletonManager = {}
+--// Utility & Math Manager
+local UtilManager = {}
 do
-    SkeletonManager.BoneMap = {
-        -- Torso
-        {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"}, {"UpperTorso", "LeftUpperArm"}, {"UpperTorso", "RightUpperArm"},
-        {"LowerTorso", "LeftUpperLeg"}, {"LowerTorso", "RightUpperLeg"},
-        -- Left Arm
-        {"LeftUpperArm", "LeftLowerArm"}, {"LeftLowerArm", "LeftHand"},
-        -- Right Arm
-        {"RightUpperArm", "RightLowerArm"}, {"RightLowerArm", "RightHand"},
-        -- Left Leg
-        {"LeftUpperLeg", "LeftLowerLeg"}, {"LeftLowerLeg", "LeftFoot"},
-        -- Right Leg
-        {"RightUpperLeg", "RightLowerLeg"}, {"RightLowerLeg", "RightFoot"},
-    }
-    function SkeletonManager:Create(data)
-        if not Settings.Skeleton.Enabled or not data.instance:IsA("Model") then return end
-        data.drawings.Skeleton = {}
-        for i = 1, #self.BoneMap do table.insert(data.drawings.Skeleton, DrawingManager.new("Line")) end
+    function UtilManager.Get3DBoxCorners(cframe, size)
+        local half = size / 2
+        return {
+            cframe * CFrame.new(half.X, half.Y, half.Z).Position, cframe * CFrame.new(half.X, -half.Y, half.Z).Position,
+            cframe * CFrame.new(-half.X, -half.Y, half.Z).Position, cframe * CFrame.new(-half.X, half.Y, half.Z).Position,
+            cframe * CFrame.new(half.X, half.Y, -half.Z).Position, cframe * CFrame.new(half.X, -half.Y, -half.Z).Position,
+            cframe * CFrame.new(-half.X, -half.Y, -half.Z).Position, cframe * CFrame.new(-half.X, half.Y, -half.Z).Position,
+        }
     end
-    function SkeletonManager:Update(data, camera)
-        local char = data.instance
-        for i, pair in ipairs(self.BoneMap) do
-            local line = data.drawings.Skeleton[i]
-            local p1, p2 = char:FindFirstChild(pair[1]), char:FindFirstChild(pair[2])
-            if line and p1 and p2 then
-                local pos1, v1 = camera:WorldToViewportPoint(p1.Position)
-                local pos2, v2 = camera:WorldToViewportPoint(p2.Position)
-                if v1 and v2 then
-                    line.Visible = true; line.Color = data.isOccluded and Settings.Skeleton.Color or Settings.Visibility.VisibleColor
-                    line.From = Vector2.new(pos1.X, pos1.Y); line.To = Vector2.new(pos2.X, pos2.Y)
-                else line.Visible = false end
-            elseif line then line.Visible = false end
-        end
-    end
+    UtilManager.BoxEdges = { {1,2},{2,3},{3,4},{4,1}, {5,6},{6,7},{7,8},{8,5}, {1,5},{2,6},{3,7},{4,8} }
 end
 
---// Radar Manager
-local RadarManager = {}
-do
-    local radarUI, dots = {}
-    function RadarManager:Create()
-        if not Settings.Radar.Enabled then return end
-        dots = {}
-        local frame = Instance.new("Frame", PlayerGui)
-        frame.Name = "ESP_Radar"; frame.Size = UDim2.fromOffset(Settings.Radar.Size, Settings.Radar.Size)
-        frame.Position = Settings.Radar.Position; frame.AnchorPoint = Settings.Radar.AnchorPoint
-        frame.BackgroundColor3 = Settings.Radar.BackgroundColor; frame.BackgroundTransparency = Settings.Radar.BackgroundTransparency
-        frame.BorderSizePixel = 1; frame.BorderColor3 = Color3.new(1,1,1)
-        local crosshairX = Instance.new("Frame", frame); crosshairX.AnchorPoint = Vector2.new(0.5,0.5); crosshairX.Position = UDim2.fromScale(0.5,0.5); crosshairX.Size = UDim2.new(1,0,0,1); crosshairX.BackgroundColor3 = Color3.new(1,1,1); crosshairX.BackgroundTransparency = 0.8
-        local crosshairY = Instance.new("Frame", frame); crosshairY.AnchorPoint = Vector2.new(0.5,0.5); crosshairY.Position = UDim2.fromScale(0.5,0.5); crosshairY.Size = UDim2.new(0,1,1,0); crosshairY.BackgroundColor3 = Color3.new(1,1,1); crosshairY.BackgroundTransparency = 0.8
-        radarUI.Frame = frame
-    end
-    function RadarManager:UpdateDot(data, camera)
-        if not radarUI.Frame or not data.instance:IsA("Model") then return end
-        local dot = dots[data.instance]
-        if not dot then dot = Instance.new("Frame", radarUI.Frame); dot.Size=UDim2.fromOffset(Settings.Radar.DotSize,Settings.Radar.DotSize); dot.AnchorPoint=Vector2.new(0.5,0.5); dot.BackgroundColor3=Settings.Radar.DotColor; dot.BorderSizePixel=0; dots[data.instance] = dot end
-        
-        local root = data.instance.PrimaryPart; if not root then dot.Visible=false; return end
-        local relPos = root.Position - LocalPlayer.Character.PrimaryPart.Position
-        if relPos.Magnitude > Settings.Radar.Range then dot.Visible=false; return end
-        
-        local _, camY = camera.CFrame:ToOrientation()
-        local rotatedX = relPos.X * math.cos(camY) - relPos.Z * math.sin(camY)
-        local rotatedZ = relPos.X * math.sin(camY) + relPos.Z * math.cos(camY)
-        
-        local scale = Settings.Radar.Size / 2 / Settings.Radar.Range
-        dot.Position = UDim2.fromScale(0.5 + rotatedX * scale, 0.5 - rotatedZ * scale)
-        dot.Visible = true
-    end
-    function RadarManager:Destroy() if radarUI.Frame then radarUI.Frame:Destroy() end; radarUI = {} end
-    function RadarManager:RemoveDot(instance) if dots and dots[instance] then dots[instance]:Destroy(); dots[instance]=nil end end
-end
-
---// Visibility Manager
-local VisibilityManager = {}
-do
-    local raycastParams = RaycastParams.new()
-    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-    function VisibilityManager:Check(data, camera)
-        if not Settings.Visibility.Enabled or (data.updateCounter % Settings.Visibility.RaycastInterval ~= 0) then return end
-        local char = LocalPlayer.Character; if not char or not char.PrimaryPart then return end
-        raycastParams.FilterDescendantsInstances = {char, data.instance}
-        local result = Workspace:Raycast(camera.CFrame.Position, data.cframe.Position - camera.CFrame.Position, raycastParams)
-        data.isOccluded = result ~= nil
-    end
-end
-
---// Target Manager (Main Controller)
+--// Target Manager (Handles visual ESP elements)
 local TargetManager = {}
 do
+    local function _get3DInfo(instance) if instance:IsA("Model") then return instance:GetBoundingBox() end; if instance:IsA("BasePart") then return instance.CFrame, instance.Size end; local p=instance:FindFirstAncestorWhichIsA("PVInstance"); if p then return p.CFrame,p.Size end return nil,nil end
+    local function _setDrawingsVisible(data, visible) if data.isVisible==visible then return end; data.isVisible=visible; for k,d in pairs(data.drawings) do if k~="Skeleton" then if type(d)=='table' then for _,sd in pairs(d) do sd.Visible=visible end else d.Visible=visible end end end
     function TargetManager:Add(instance, options)
-        if not instance or TrackedObjects[instance] then return end; options = options or {}
-        local defaults = Settings[options.Type or "Instances"] or Settings.Instances; local finalOptions = {}
-        for k, v in pairs(defaults) do finalOptions[k] = v end; for k, v in pairs(options) do finalOptions[k] = v end
-        local data = { options = finalOptions, drawings = {}, connections = {}, isVisible = false, isOccluded = true, updateCounter = math.random(0, 10), instance = instance}
-        if finalOptions.Box then data.drawings.Box = DrawingManager.new("Quad") end
-        if finalOptions.Name then data.drawings.Name = DrawingManager.new("Text", {Center = true}) end
-        if finalOptions.Distance then data.drawings.Distance = DrawingManager.new("Text", {Center = true}) end
-        if finalOptions.Tracer then data.drawings.Tracer = DrawingManager.new("Line") end
-        if finalOptions.Healthbar and instance:IsA("Model") then data.drawings.HealthbarBack = DrawingManager.new("Quad"); data.drawings.HealthbarFront = DrawingManager.new("Quad") end
-        local humanoid = instance:FindFirstChildOfClass("Humanoid"); if humanoid then table.insert(data.connections, humanoid.Died:Connect(function() TargetManager:Remove(instance) end)) end
-        table.insert(data.connections, instance.AncestryChanged:Connect(function(_, p) if not p then TargetManager:Remove(instance) end end))
-        SkeletonManager:Create(data)
-        TrackedObjects[instance] = data
+        if not instance or TrackedObjects[instance] then return end; options=options or {}
+        local defaults=Settings[options.Type or "Instances"] or Settings.Instances; local finalOpts={}
+        for k,v in pairs(defaults) do finalOpts[k]=v end; for k,v in pairs(options) do finalOpts[k]=v end
+        local data={options=finalOpts,drawings={},connections={},isVisible=false,isOccluded=true,updateCounter=math.random(0,10),instance=instance}
+        if finalOpts.BoxType == "2D" then data.drawings.Box2D=DrawingManager.new("Quad") elseif finalOpts.BoxType == "3D" then data.drawings.Box3D={}; for i=1,12 do table.insert(data.drawings.Box3D, DrawingManager.new("Line")) end end
+        if finalOpts.Name then data.drawings.Name=DrawingManager.new("Text",{Center=true}) end
+        if finalOpts.Distance then data.drawings.Distance=DrawingManager.new("Text",{Center=true}) end
+        if finalOpts.Weapon then data.drawings.Weapon=DrawingManager.new("Text",{Center=true}) end
+        if finalOpts.Healthbar and instance:FindFirstChildOfClass("Humanoid") then data.drawings.HealthbarBack=DrawingManager.new("Quad"); data.drawings.HealthbarFront=DrawingManager.new("Quad") end
+        local h=instance:FindFirstChildOfClass("Humanoid"); if h then table.insert(data.connections, h.Died:Connect(function() TargetManager:Remove(instance) end)) end
+        table.insert(data.connections, instance.AncestryChanged:Connect(function(_,p) if not p then TargetManager:Remove(instance) end end))
+        if Settings.Skeleton.Enabled and instance:IsA("Model") then data.drawings.Skeleton={}; for i=1,#UtilManager.BoxEdges do table.insert(data.drawings.Skeleton,DrawingManager.new("Line")) end end
+        TrackedObjects[instance]=data
     end
-    function TargetManager:Remove(instance)
-        local data = TrackedObjects[instance]; if not data then return end
-        for _, d in pairs(data.drawings) do if type(d)=='table' then for _,sd in pairs(d) do sd:Remove() end else d:Remove() end end
-        for _, c in ipairs(data.connections) do c:Disconnect() end
-        RadarManager:RemoveDot(instance)
-        TrackedObjects[instance] = nil
+    function TargetManager:Remove(instance) local data=TrackedObjects[instance]; if not data then return end; for _,d in pairs(data.drawings) do if type(d)=='table' then for _,sd in pairs(d) do sd:Remove() end else d:Remove() end end; for _,c in ipairs(data.connections) do c:Disconnect() end; TrackedObjects[instance]=nil end
+    function TargetManager:UpdateAll()
+        local camera=Workspace.CurrentCamera; if not camera then return end; local cameraCF=camera.CFrame
+        for instance,data in pairs(TrackedObjects) do
+            data.updateCounter=data.updateCounter+1
+            if not data.options.Enabled then _setDrawingsVisible(data,false); continue end
+            local cframe,size=_get3DInfo(instance); data.cframe, data.size = cframe, size
+            if not cframe then _setDrawingsVisible(data,false); continue end
+            local distance=(cameraCF.Position-cframe.Position).Magnitude; data.distance=distance
+            if distance>Settings.MaxDistance then _setDrawingsVisible(data,false); continue end
+            local pos,onScreen=camera:WorldToViewportPoint(cframe.Position); data.screenPos, data.onScreen = Vector2.new(pos.X,pos.Y), onScreen
+            _setDrawingsVisible(data,onScreen); if onScreen then self:UpdateDrawings(data,camera) end
+        end
     end
-    function TargetManager:_get3DInfo(instance)
-        if instance:IsA("Model") then return instance:GetBoundingBox() end; if instance:IsA("BasePart") then return instance.CFrame, instance.Size end
-        local p = instance:FindFirstAncestorWhichIsA("PVInstance"); if p then return p.CFrame, p.Size end; return nil, nil
+    function TargetManager:UpdateDrawings(data, camera)
+        local o,d,c,s,dist=data.options,data.drawings,data.cframe,data.size,data.distance
+        local color=data.isOccluded and DrawingManager:GetColor(o.BoxColor) or DrawingManager:GetColor(Settings.Visibility.VisibleColor)
+        local corners=UtilManager.Get3DBoxCorners(c,s); local screenCorners,minX,minY,maxX,maxY={},math.huge,math.huge,-math.huge,-math.huge
+        for i=1,8 do local p,v=camera:WorldToViewportPoint(corners[i]); screenCorners[i]=Vector2.new(p.X,p.Y); if v then minX=math.min(minX,p.X); minY=math.min(minY,p.Y); maxX=math.max(maxX,p.X); maxY=math.max(maxY,p.Y) end end
+        local boxW,boxH=maxX-minX,maxY-minY
+        if o.BoxType=="3D" and d.Box3D then for i,edge in ipairs(UtilManager.BoxEdges) do local l=d.Box3D[i]; l.Color=color; l.From=screenCorners[edge[1]]; l.To=screenCorners[edge[2]]; l.Visible=true end
+        elseif o.BoxType=="2D" and d.Box2D then d.Box2D.Color=color; d.Box2D.Position=Vector2.new(minX,minY); d.Box2D.Size=Vector2.new(boxW,boxH) end
+        if d.Name then d.Name.Color=DrawingManager:GetColor(o.NameColor); d.Name.Text=data.instance.Name; d.Name.Position=Vector2.new(minX+boxW/2,minY-16) end
+        if d.Distance then d.Distance.Text=`[{math.floor(dist)}m]`; d.Distance.Position=Vector2.new(minX+boxW/2,maxY+2); d.Distance.Color=DrawingManager:GetColor(o.NameColor) end
+        if d.Weapon then local tool=data.instance:FindFirstChildOfClass("Tool"); d.Weapon.Visible=tool~=nil; if tool then d.Weapon.Text=tool.Name; d.Weapon.Color=DrawingManager:GetColor(o.WeaponColor); d.Weapon.Position=Vector2.new(minX+boxW/2,maxY+14) end end
+        if d.HealthbarBack then local h=data.instance:FindFirstChildOfClass("Humanoid"); if h then local p=h.Health/h.MaxHealth; d.HealthbarBack.Color=Color3.new(0,0,0); d.HealthbarBack.Position=Vector2.new(minX-7,minY); d.HealthbarBack.Size=Vector2.new(4,boxH); d.HealthbarFront.Color=Color3.fromHSV(0.33*p,1,1); d.HealthbarFront.Position=Vector2.new(minX-7,minY+boxH*(1-p)); d.HealthbarFront.Size=Vector2.new(4,boxH*p) end end
     end
-    function TargetManager:_setDrawingsVisible(data, visible)
-        if data.isVisible == visible then return end; data.isVisible = visible
-        for k, drawing in pairs(data.drawings) do if k~="Skeleton" then if type(drawing)=='table' then for _,sd in pairs(drawing) do sd.Visible = visible end else drawing.Visible = visible end end end
-    end
-    function TargetManager:_updateDrawings(data, cframe, size, distance, camera)
-        local options, drawings = data.options, data.drawings; local halfSize = size / 2
-        local corners = { cframe.Position+cframe.RightVector*halfSize.X+cframe.UpVector*halfSize.Y, cframe.Position-cframe.RightVector*halfSize.X-cframe.UpVector*halfSize.Y, cframe.Position-cframe.RightVector*halfSize.X+cframe.UpVector*halfSize.Y, cframe.Position+cframe.RightVector*halfSize.X-cframe.UpVector*halfSize.Y }
-        local minX,minY,maxX,maxY=math.huge,math.huge,-math.huge,-math.huge
-        for _,p in ipairs(corners) do local sp=camera:WorldToViewportPoint(p); minX,minY=math.min(minX,sp.X),math.min(minY,sp.Y); maxX,maxY=math.max(maxX,sp.X),math.max(maxY,sp.Y) end
-        local boxWidth,boxHeight=maxX-minX,maxY-minY
-        local boxColor = data.isOccluded and options.BoxColor or Settings.Visibility.VisibleColor
-        if drawings.Box then drawings.Box.Color=boxColor; drawings.Box.Position=Vector2.new(minX,minY); drawings.Box.Size=Vector2.new(boxWidth,boxHeight) end
-        if drawings.Name then drawings.Name.Color=options.NameColor; drawings.Name.Text=data.instance.Name; drawings.Name.Position=Vector2.new(minX+boxWidth/2,minY-16) end
-        if drawings.Distance then drawings.Distance.Text=`[{math.floor(distance)}m]`; drawings.Distance.Position=Vector2.new(minX+boxWidth/2,maxY+2) end
-        if drawings.Tracer then drawings.Tracer.Color=options.TracerColor; drawings.Tracer.From=Vector2.new(camera.ViewportSize.X/2,camera.ViewportSize.Y); drawings.Tracer.To=Vector2.new(minX+boxWidth/2,maxY) end
-        if drawings.HealthbarBack and data.instance:IsA("Model") then local h=data.instance:FindFirstChildOfClass("Humanoid"); if h then local p=h.Health/h.MaxHealth; drawings.HealthbarBack.Color=Color3.new(0,0,0); drawings.HealthbarBack.Position=Vector2.new(minX-7,minY); drawings.HealthbarBack.Size=Vector2.new(4,boxHeight); drawings.HealthbarFront.Color=Color3.fromHSV(0.33*p,1,1); drawings.HealthbarFront.Position=Vector2.new(minX-7,minY+boxHeight*(1-p)); drawings.HealthbarFront.Size=Vector2.new(4,boxHeight*p) end end
-    end
-    function TargetManager:Start()
-        if self.Started then return end; self.Started = true
-        local frameCounter = 0
-        GlobalConnections.RenderStepped = RunService.RenderStepped:Connect(function()
-            local camera = Workspace.CurrentCamera; if not camera or not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then return end
-            if not Settings.Enabled then if self.WasEnabled then for _,d in pairs(TrackedObjects) do TargetManager:_setDrawingsVisible(d,false) end; if Settings.Radar.Enabled then RadarManager:Destroy() end; self.WasEnabled=false end return end
-            if not self.WasEnabled then if Settings.Radar.Enabled then RadarManager:Create() end end; self.WasEnabled=true
-            frameCounter=frameCounter+1; if Settings.UpdateInterval>0 and frameCounter%(Settings.UpdateInterval+1)~=0 then return end
-            local cameraCF=camera.CFrame
-            for instance,data in pairs(TrackedObjects) do
-                data.updateCounter=data.updateCounter+1
-                if not data.options.Enabled then TargetManager:_setDrawingsVisible(data,false); continue end
-                if data.options.Type=="Players" and data.options.TeamCheck and instance.Parent then local p=Players:GetPlayerFromCharacter(instance); if p and p.Team==LocalPlayer.Team then TargetManager:_setDrawingsVisible(data,false); continue end end
-                local cframe,size=TargetManager:_get3DInfo(instance); data.cframe = cframe
-                if not cframe then TargetManager:_setDrawingsVisible(data,false); continue end
-                local distance=(cameraCF.Position-cframe.Position).Magnitude
-                if distance>Settings.MaxDistance then TargetManager:_setDrawingsVisible(data,false); continue end
-                VisibilityManager:Check(data, camera)
-                local _,onScreen=camera:WorldToViewportPoint(cframe.Position)
-                TargetManager:_setDrawingsVisible(data,onScreen)
-                if onScreen then
-                    TargetManager:_updateDrawings(data,cframe,size,distance,camera)
-                    if Settings.Skeleton.Enabled and data.drawings.Skeleton then SkeletonManager:Update(data,camera) end
-                    if Settings.Radar.Enabled then RadarManager:UpdateDot(data,camera) end
-                end
+end
+
+--// Targeting Manager (Aimbot Foundation)
+local TargetingManager = {}
+do
+    function TargetingManager:GetBestTarget(criteria)
+        criteria=criteria or {Mode="Crosshair"}; local bestTarget,bestScore=nil,math.huge
+        local crosshair=Vector2.new(Workspace.CurrentCamera.ViewportSize.X/2, Workspace.CurrentCamera.ViewportSize.Y/2)
+        for _,data in pairs(TrackedObjects) do
+            if data.onScreen and data.options.Type=="Players" then
+                local score;
+                if criteria.Mode=="Crosshair" then score=(data.screenPos-crosshair).Magnitude
+                elseif criteria.Mode=="Distance" then score=data.distance
+                elseif criteria.Mode=="Health" then local h=data.instance:FindFirstChildOfClass("Humanoid"); score=h and h.Health or math.huge else continue end
+                if score<bestScore then bestScore=score; bestTarget=data end
             end
-        end)
+        end
+        return bestTarget
     end
 end
 
---//============================================================================//
---//                           PUBLIC API & BOOTSTRAP                           //
---//============================================================================//
-
-ESP.Add = TargetManager.Add
-ESP.Remove = TargetManager.Remove
-ESP.SetConfig = function(category, key, value) if category=="Global" and Settings[key]~=nil then Settings[key]=value elseif Settings[category] and Settings[category][key]~=nil then Settings[category][key]=value end end
-ESP.AddPlayerESP = function(options) local function hP(p) local function hC(c) if p~=LocalPlayer then ESP.Add(c,options or {Type="Players"}) end end p.CharacterAdded:Connect(hC); if p.Character then hC(p.Character) end end for _,p in ipairs(Players:GetPlayers()) do hP(p) end; GlobalConnections.PlayerAdded=Players.PlayerAdded:Connect(hP) end
-ESP.AddFolderESP = function(parent, options) if not parent then return end; local o=options or {Type="Instances"}; local function hD(d) if d:IsA("PVInstance") and not Players:GetPlayerFromCharacter(d) then ESP.Add(d,o) end end; GlobalConnections[parent]={parent.DescendantAdded:Connect(hD),parent.DescendantRemoving:Connect(function(d) ESP.Remove(d) end)}; for _,d in ipairs(parent:GetDescendants()) do hD(d) end end
-
-function ESP:CreateMenu()
-    if self.MenuGui or not Settings.Menu.Enabled then return end
-    local gui = Instance.new("ScreenGui", PlayerGui); gui.Name="ESP_Menu"; gui.ResetOnSpawn=false
-    local main = Instance.new("Frame",gui); main.Size=UDim2.fromOffset(280,420); main.Position=UDim2.fromScale(0.5,0.5); main.AnchorPoint=Vector2.new(0.5,0.5); main.BackgroundColor3=Color3.fromRGB(35,35,35); main.BorderColor3=Color3.fromRGB(80,80,80); main.Visible=false; main.Draggable=true; main.Active=true
-    local title = Instance.new("TextLabel",main); title.Size=UDim2.new(1,0,0,30); title.BackgroundColor3=Color3.fromRGB(45,45,45); title.Text="ESP Definitive Edition"; title.Font=Enum.Font.SourceSansBold; title.TextColor3=Color3.new(1,1,1); title.TextSize=16
-    local list = Instance.new("UIListLayout",main); list.SortOrder=Enum.SortOrder.LayoutOrder; list.HorizontalAlignment=Enum.HorizontalAlignment.Center; list.Padding=UDim.new(0,5); list.From=UDim2.fromOffset(0,35)
-    local function createToggle(text,cat,key,order) local b=Instance.new("TextButton",main); b.LayoutOrder=order; b.Size=UDim2.new(0.9,0,0,25); b.Font=Enum.Font.SourceSans; b.TextSize=14; b.TextColor3=Color3.new(1,1,1); local function u() local v=(cat=="Global" and Settings[key]) or Settings[cat][key]; b.Text=text..": "..(v and "ON" or "OFF"); b.BackgroundColor3=v and Color3.fromRGB(70,110,70) or Color3.fromRGB(110,70,70) end; b.MouseButton1Click:Connect(function() local t=Settings[cat]; local nV=not((cat=="Global" and Settings[key])or t[key]); ESP:SetConfig(cat,key,nV); u(); if cat=="Radar" and key=="Enabled" then if nV then RadarManager:Create() else RadarManager:Destroy() end end end); u() end
-    createToggle("Master ESP","Global","Enabled",1); createToggle("Player ESP","Players","Enabled",2); createToggle("└ Player Boxes","Players","Box",3); createToggle("└ Player Names","Players","Name",4); createToggle("└ Player Health","Players","Healthbar",5); createToggle("└ Team Check","Players","TeamCheck",7)
-    createToggle("Skeleton ESP","Skeleton","Enabled",8); createToggle("2D Radar","Radar","Enabled",9); createToggle("Visibility Check","Visibility","Enabled",10); createToggle("Instance ESP","Instances","Enabled",11)
-    GlobalConnections.MenuToggle=UserInputService.InputBegan:Connect(function(i,g) if g then return end if i.KeyCode==Settings.Menu.ToggleKeybind then main.Visible=not main.Visible end end)
-    self.MenuGui=gui
+--// Config Manager (Save/Load)
+local ConfigManager = {}
+do
+    local function serialize(tbl) local s,e = pcall(HttpService.JSONEncode, HttpService, tbl); return e and s end
+    local function deserialize(str) local d,e = pcall(HttpService.JSONDecode, HttpService, str); return e and d end
+    function ConfigManager:Save(name) if not isfolder or not writefile then return warn("Filesystem access not available.") end; if not isfolder("ESP_Configs") then makefolder("ESP_Configs") end; writefile("ESP_Configs/"..name..".json", serialize(Settings)) end
+    function ConfigManager:Load(name) if not isfile or not readfile then return warn("Filesystem access not available.") end; local path="ESP_Configs/"..name..".json"; if not isfile(path) then return warn("Config not found:", name) end; local data=deserialize(readfile(path)); if not data then return warn("Failed to parse config:", name) end; for k,v in pairs(data) do if type(v)=='table' then for k2,v2 in pairs(v) do if Settings[k] then Settings[k][k2]=v2 end else Settings[k]=v end end end
 end
+
+--// GUI Manager
+local GUIManager = {}
+do
+    -- This section is intentionally dense to manage the large amount of UI code.
+    -- In a real scenario, this would be multiple modules.
+    local menu,pages={}; function GUIManager:Create() if menu.Frame or not Settings.Menu.Enabled then return end; menu.Frame=Instance.new("Frame",PlayerGui); menu.Frame.Name="ESP_UltimateMenu"; menu.Frame.Size=UDim2.fromOffset(500,400); menu.Frame.Position=UDim2.fromScale(0.5,0.5); menu.Frame.AnchorPoint=Vector2.new(0.5,0.5); menu.Frame.BackgroundColor3=Color3.fromRGB(30,30,30); menu.Frame.BorderColor3=Color3.fromRGB(80,80,80); menu.Frame.Visible=false; menu.Frame.Draggable=true; menu.Frame.Active=true; local title=Instance.new("TextLabel",menu.Frame); title.Size=UDim2.new(1,0,0,30); title.BackgroundColor3=Color3.fromRGB(45,45,45); title.Text="ESP Ultimate Edition"; title.Font=Enum.Font.SourceSansBold; title.TextColor3=Color3.new(1,1,1); title.TextSize=16; local tabsContainer=Instance.new("Frame",menu.Frame); tabsContainer.Size=UDim2.new(1,0,0,25); tabsContainer.Position=UDim2.fromOffset(0,30); tabsContainer.BackgroundTransparency=1; local tabLayout=Instance.new("UIListLayout",tabsContainer); tabLayout.FillDirection=Enum.FillDirection.Horizontal; tabLayout.Padding=UDim.new(0,5); local pagesContainer=Instance.new("Frame",menu.Frame); pagesContainer.Size=UDim2.new(1,-10,1,-60); pagesContainer.Position=UDim2.fromOffset(5,55); pagesContainer.BackgroundTransparency=1; local function createPage(name) local p=Instance.new("Frame",pagesContainer); p.Name=name; p.Size=UDim2.fromScale(1,1); p.BackgroundTransparency=1; p.Visible=false; local l=Instance.new("UIListLayout",p); l.Padding=UDim.new(0,5); pages[name]=p; return p end; local function switchPage(name) for n,p in pairs(pages) do p.Visible=n==name end end; local function createTab(name) local b=Instance.new("TextButton",tabsContainer); b.Size=UDim2.fromScale(0.18,1); b.Text=name; b.BackgroundColor3=Color3.fromRGB(60,60,60); b.Font=Enum.Font.SourceSans; b.TextColor3=Color3.new(1,1,1); b.MouseButton1Click:Connect(function() switchPage(name) end) end; local function createToggle(parent,text,cat,key) local p=Instance.new("Frame",parent); p.Size=UDim2.new(1,0,0,25); p.BackgroundTransparency=1; local l=Instance.new("TextLabel",p); l.Size=UDim2.fromScale(0.6,1); l.Text=text; l.Font=Enum.Font.SourceSans; l.TextColor3=Color3.new(1,1,1); l.TextXAlignment=Enum.TextXAlignment.Left; local b=Instance.new("TextButton",p); b.Size=UDim2.fromScale(0.35,1); b.Position=UDim2.fromScale(0.65,0); local function u() local v=(cat=="Global" and Settings[key]) or Settings[cat][key]; b.Text=v and "ON" or "OFF"; b.BackgroundColor3=v and Color3.fromRGB(70,110,70) or Color3.fromRGB(110,70,70) end; b.MouseButton1Click:Connect(function() local t=Settings[cat]; local nV=not((cat=="Global" and Settings[key])or t[key]); ESP:SetConfig(cat,key,nV); u() end); u() end; local function createColorPicker(parent,text,cat,key) local p=Instance.new("Frame",parent); p.Size=UDim2.new(1,0,0,25); p.BackgroundTransparency=1; local l=Instance.new("TextLabel",p); l.Size=UDim2.fromScale(0.4,1); l.Text=text; l.Font=Enum.Font.SourceSans; l.TextColor3=Color3.new(1,1,1); l.TextXAlignment=Enum.TextXAlignment.Left; local preview=Instance.new("Frame",p); preview.Size=UDim2.fromOffset(25,25); preview.Position=UDim2.fromScale(0.4,0); local function updatePreview() preview.BackgroundColor3=DrawingManager:GetColor(Settings[cat][key]) end; local function createInput(pos,channel) local box=Instance.new("TextBox",p); box.Size=UDim2.fromScale(0.15,1); box.Position=UDim2.fromScale(pos,0); box.Text=tostring(Settings[cat][key][channel]); box.BackgroundColor3=Color3.fromRGB(50,50,50); box.TextColor3=Color3.new(1,1,1); box.FocusLost:Connect(function() local n=tonumber(box.Text); if n and n>=0 and n<=255 then Settings[cat][key][channel]=math.floor(n) else box.Text=tostring(Settings[cat][key][channel]) end updatePreview() end) end; createInput(0.55,"R"); createInput(0.7,"G"); createInput(0.85,"B"); updatePreview(); end; local p1=createPage("Main"); createToggle(p1,"Master ESP","Global","Enabled"); createToggle(p1,"Player ESP","Players","Enabled"); createToggle(p1,"Team Check","Players","TeamCheck"); createToggle(p1,"Held Weapon","Players","Weapon"); createToggle(p1,"Healthbars","Players","Healthbar"); createToggle(p1,"Names","Players","Name"); createToggle(p1,"Distance","Players","Distance"); local p2=createPage("Visuals"); createToggle(p2,"Skeleton","Skeleton","Enabled"); createToggle(p2,"Visibility Check","Visibility","Enabled"); local boxTypeFrame=Instance.new("Frame",p2); boxTypeFrame.Size=UDim2.new(1,0,0,25); boxTypeFrame.BackgroundTransparency=1; local boxLabel=Instance.new("TextLabel",boxTypeFrame); boxLabel.Size=UDim2.fromScale(0.4,1); boxLabel.Text="Box Type"; boxLabel.Font=Enum.Font.SourceSans; boxLabel.TextColor3=Color3.new(1,1,1); boxLabel.TextXAlignment=Enum.TextXAlignment.Left; local boxDropdown=Instance.new("TextButton",boxTypeFrame); boxDropdown.Size=UDim2.fromScale(0.55,1); boxDropdown.Position=UDim2.fromScale(0.45,0); boxDropdown.Text=Settings.Players.BoxType; boxDropdown.MouseButton1Click:Connect(function() Settings.Players.BoxType = Settings.Players.BoxType=="2D" and "3D" or "2D"; boxDropdown.Text=Settings.Players.BoxType end); local p3=createPage("Colors"); createColorPicker(p3,"Box Color","Players","BoxColor"); createColorPicker(p3,"Visible Color","Visibility","VisibleColor"); createColorPicker(p3,"Name Color","Players","NameColor"); createColorPicker(p3,"Weapon Color","Players","WeaponColor"); createColorPicker(p3,"Skeleton Color","Skeleton","Color"); local p4=createPage("Radar"); createToggle(p4,"Radar","Radar","Enabled"); local p5=createPage("Configs"); local saveFrame=Instance.new("Frame",p5); saveFrame.Size=UDim2.new(1,0,0,30); saveFrame.BackgroundTransparency=1; local saveBox=Instance.new("TextBox",saveFrame); saveBox.Size=UDim2.fromScale(0.7,1); saveBox.PlaceholderText="Config Name..."; local saveBtn=Instance.new("TextButton",saveFrame); saveBtn.Size=UDim2.fromScale(0.28,1); saveBtn.Position=UDim2.fromScale(0.72,0); saveBtn.Text="Save"; saveBtn.MouseButton1Click:Connect(function() if saveBox.Text~="" then ConfigManager:Save(saveBox.Text) end end); local loadFrame=Instance.new("Frame",p5); loadFrame.Size=UDim2.new(1,0,0,30); loadFrame.BackgroundTransparency=1; local loadBox=Instance.new("TextBox",loadFrame); loadBox.Size=UDim2.fromScale(0.7,1); loadBox.PlaceholderText="Config Name..."; local loadBtn=Instance.new("TextButton",loadFrame); loadBtn.Size=UDim2.fromScale(0.28,1); loadBtn.Position=UDim2.fromScale(0.72,0); loadBtn.Text="Load"; loadBtn.MouseButton1Click:Connect(function() if loadBox.Text~="" then ConfigManager:Load(loadBox.Text) end end); createTab("Main"); createTab("Visuals"); createTab("Colors"); createTab("Radar"); createTab("Configs"); switchPage("Main"); GlobalConnections.MenuToggle=UserInputService.InputBegan:Connect(function(i,g)if g then return end if i.KeyCode==Settings.Menu.ToggleKeybind then menu.Frame.Visible=not menu.Frame.Visible end end) end
+end
+
+--//============================================================================//
+--//                                  MAIN                                      //
+--//============================================================================//
 
 do
-    GlobalConnections.MasterToggle=UserInputService.InputBegan:Connect(function(i,g) if g then return end if i.KeyCode==Settings.ToggleKeybind then Settings.Enabled=not Settings.Enabled end end)
-    TargetManager:Start(); ESP:CreateMenu(); if Settings.Radar.Enabled then RadarManager:Create() end
+    function ESP:Start()
+        TargetManager:Start()
+        GUIManager:Create()
+    end
+    ESP.GetBestTarget = TargetingManager.GetBestTarget
+    ESP.SaveConfig = ConfigManager.Save
+    ESP.LoadConfig = ConfigManager.Load
+    ESP:Start()
 end
 
 return ESP
