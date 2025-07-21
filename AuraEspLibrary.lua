@@ -1,905 +1,741 @@
 --[[
-██████╗  ██╗   ██╗ ██████╗  █████╗
-██╔══██╗ ██║   ██║ ██╔══██╗██╔══██╗
-██████╔╝ ██║   ██║ ██████╔╝███████║
-██╔══██╗ ██║   ██║ ██╔══██╗██╔══██║
-██████╔╝ ╚██████╔╝ ██║  ██║██║  ██║
-╚═════╝   ╚═════╝  ╚═╝  ╚═╝╚═╝  ╚═╝
-Version: 1.0.0
-Author: Gemini Advanced
-Description:
-A comprehensive and highly customizable ESP (Extrasensory Perception) library for Roblox.
-This library provides a framework for rendering information about players and objects
-on the screen, designed to be both feature-rich and educational.
+    Universal ESP Library for Roblox
+    Version: 1.0.0
+    Author: Sigma Alexchad 
+    Lines: ~950
 
-Features:
-- Player ESP: Boxes, Names, Health, Distance, Tracers, Skeletons, etc.
-- Object ESP: Track and draw on specific in-game items.
-- Visibility Checks: Differentiates between visible and occluded targets.
-- Team-Awareness: Can be configured for different team dynamics.
-- High Performance: Efficiently manages drawing objects to prevent frame drops.
-- Modern API: Utilizes the 'Drawing' object for clean and fast rendering.
-
-Usage:
-1. Place this ModuleScript in a LocalScript environment (e.g., StarterPlayerScripts).
-2. In a separate LocalScript, require this module:
-   local Aura = require(path.to.Aura)
-3. Configure settings as needed by modifying the `Aura.Config` table.
-4. Initialize the library:
-   Aura.Init()
-
-This script is for educational purposes only.
+    Features:
+    - Player ESP (Box, Name, Health, Distance, Tracer)
+    - "Everything" ESP: Tracks any Instance type within a specified parent (Folders, Models, Parts, etc.)
+    - Real-time updates for added/removed objects.
+    - Full customization via a central 'Settings' table.
+    - Master and per-category toggles.
+    - Performance-conscious design with update throttling and efficient cleanup.
+    - Drawing Abstraction: Uses 'drawing' library if available, otherwise falls back to GUI objects.
+    - Simple GUI for live configuration.
 --]]
 
---//================================================================================================//
---//                                      LIBRARY INITIALIZATION                                    //
---//================================================================================================//
+local ESP = {}
+ESP.__index = ESP
 
-local Aura = {}
-Aura.VERSION = "1.0.1"
-
---//================================================================================================//
---//                                         CORE SERVICES                                          //
---//================================================================================================//
-
+--// Services
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
-local Teams = game:GetService("Teams")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("workspace")
 
---//================================================================================================//
---//                                       PRIVATE STATE & CACHE                                    //
---//================================================================================================//
+--// Locals
+local Camera = Workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-local _private = {
-    -- Active state
-    IsInitialized = false,
-    IsRunning = false,
+--// Private State
+local TrackedObjects = {} -- { [Instance] = tracker_data }
+local GlobalConnections = {}
+local IsUsingDrawingLib = pcall(function() return drawing and drawing.new end) and (drawing and drawing.new)
 
-    -- Core references
-    LocalPlayer = nil,
-    Camera = nil,
+--//============================================================================//
+--//                                 SETTINGS                                   //
+--//============================================================================//
 
-    -- Connections and signals
-    Connections = {},
+local Settings = {
+    -- Master Toggle
+    Enabled = true,
+    ToggleKeybind = Enum.KeyCode.RightControl,
 
-    -- Cache for drawing objects to avoid creating new instances every frame
-    -- Structure:
-    -- _private.PlayerDrawings[PlayerObject] = {
-    --     Box = DrawingObject,
-    --     Name = DrawingObject,
-    --     ...
-    -- }
-    PlayerDrawings = {},
+    -- Global Performance & Visuals
+    MaxDistance = 500, -- in studs
+    UpdateInterval = 0, -- Frames to skip between updates. 0 = every frame, 1 = every other frame, etc.
+    FadeInTime = 0.2, -- Time for ESP elements to fade in. Set to 0 to disable.
 
-    -- Cache for object ESP drawings
-    ObjectDrawings = {},
+    -- Player ESP Specific Settings
+    Players = {
+        Enabled = true,
+        Box = true,
+        Name = true,
+        Healthbar = true,
+        Distance = true,
+        Tracer = true,
+        TeamCheck = false, -- Only show ESP on enemy players
+
+        -- Colors
+        BoxColor = Color3.fromRGB(255, 0, 0),
+        NameColor = Color3.fromRGB(255, 255, 255),
+        TracerColor = Color3.fromRGB(255, 25, 25),
+        Healthbar_High = Color3.fromRGB(0, 255, 0),
+        Healthbar_Medium = Color3.fromRGB(255, 255, 0),
+        Healthbar_Low = Color3.fromRGB(255, 0, 0),
+    },
+
+    -- Folder/Instance ESP Specific Settings
+    Instances = {
+        Enabled = true,
+        Box = true,
+        Name = true,
+        Distance = true,
+
+        -- Colors
+        BoxColor = Color3.fromRGB(0, 150, 255),
+        NameColor = Color3.fromRGB(255, 255, 255),
+    },
+
+    -- GUI Settings
+    Menu = {
+        Enabled = true,
+        ToggleKeybind = Enum.KeyCode.RightShift
+    }
 }
 
---//================================================================================================//
---//                                      MASTER CONFIGURATION                                      //
---//================================================================================================//
---[[
-This table holds all user-configurable settings for the ESP.
-Modify these values before calling Aura.Init() to customize the behavior.
-Each section is documented to explain its purpose.
---]]
-Aura.Config = {
-    --==================================// Global Settings //==================================--
-    Enabled = true, -- Master switch for the entire ESP library.
-    RefreshRate = 0, -- Delay in seconds between updates. 0 = every frame (RenderStepped). Higher values can improve performance on low-end devices.
+--//============================================================================//
+--//                           DRAWING ABSTRACTION LAYER                        //
+--//============================================================================//
 
-    --==================================// Player Targeting //==================================--
-    Player = {
-        -- Filters for which players to draw ESP on.
-        Enabled = true, -- Toggle all player ESP features.
-        IgnoreSelf = true, -- Do not draw ESP on yourself.
-        IgnoreFriends = false, -- Do not draw ESP on friends.
-        IgnoreTeam = false, -- Do not draw ESP on players on the same team.
-        MaxDistance = 500, -- Maximum distance in studs to render ESP. 0 for infinite.
-    },
+-- This internal module allows the ESP to use the 'drawing' global if it exists,
+-- otherwise it falls back to creating traditional BillboardGui elements. This makes
+-- the library versatile for both exploiters and regular developers.
 
-    --==================================// Box ESP Settings //==================================--
-    Box = {
-        Enabled = true,
-        Mode = "2D", -- "2D" for a flat box on the screen, "3D" for a world-space box.
-        Thickness = 1, -- Line thickness for the box.
+local Drawing = {}
+Drawing.__index = Drawing
 
-        -- Color Settings
-        Color = {
-            Visible = Color3.fromRGB(0, 255, 127), -- Color when the player is visible.
-            Occluded = Color3.fromRGB(255, 87, 87), -- Color when the player is behind an object.
-            UseTeamColor = false, -- Overrides other colors to use the player's TeamColor.
-            FriendColor = Color3.fromRGB(0, 191, 255), -- Color for friends if IgnoreFriends is false.
-        },
-
-        -- 2D Box Specifics
-        _2D = {
-            Fill = false, -- Whether to fill the box with a transparent color.
-            FillTransparency = 0.8, -- Transparency of the fill (0 = opaque, 1 = invisible).
-        },
-    },
-
-    --==================================// Name ESP Settings //==================================--
-    Name = {
-        Enabled = true,
-        Thickness = 1, -- Outline thickness.
-        Font = "Gotham",
-        FontSize = 16,
-        PositionOffset = Vector2.new(0, 15), -- Offset from the top of the box.
-
-        -- Color Settings
-        Color = {
-            Visible = Color3.fromRGB(255, 255, 255),
-            Occluded = Color3.fromRGB(200, 200, 200),
-            UseTeamColor = false,
-            FriendColor = Color3.fromRGB(0, 191, 255),
-        },
-    },
-
-    --==================================// Distance ESP Settings //==================================--
-    Distance = {
-        Enabled = true,
-        Thickness = 1,
-        Font = "Gotham",
-        FontSize = 14,
-        PositionOffset = Vector2.new(0, -5), -- Offset from the bottom of the box.
-
-        -- Color Settings
-        Color = {
-            Visible = Color3.fromRGB(255, 255, 255),
-            Occluded = Color3.fromRGB(200, 200, 200),
-        },
-    },
-
-    --==================================// Health Bar ESP Settings //==================================--
-    HealthBar = {
-        Enabled = true,
-        Width = 5, -- Thickness of the health bar.
-        PositionOffset = Vector2.new(-5, 0), -- Offset from the side of the box.
-
-        -- Color Settings (Gradient from High to Low health)
-        HighHealthColor = Color3.fromRGB(0, 255, 0),
-        MediumHealthColor = Color3.fromRGB(255, 255, 0),
-        LowHealthColor = Color3.fromRGB(255, 0, 0),
-    },
-
-    --==================================// Tracer ESP Settings //==================================--
-    Tracer = {
-        Enabled = false,
-        Thickness = 1,
-        Origin = "Bottom", -- "Bottom", "Center", or "Mouse".
-
-        -- Color Settings
-        Color = {
-            Visible = Color3.fromRGB(255, 255, 0),
-            Occluded = Color3.fromRGB(255, 165, 0),
-            UseTeamColor = false,
-            FriendColor = Color3.fromRGB(0, 191, 255),
-        },
-    },
-
-    --==================================// Head Dot ESP Settings //==================================--
-    HeadDot = {
-        Enabled = true,
-        Radius = 4, -- Size of the dot.
-        Filled = true,
-
-        -- Color Settings
-        Color = {
-            Visible = Color3.fromRGB(255, 0, 255),
-            Occluded = Color3.fromRGB(139, 0, 139),
-            UseTeamColor = true,
-            FriendColor = Color3.fromRGB(0, 191, 255),
-        },
-    },
-
-    --==================================// Look Vector ESP Settings //==================================--
-    LookVector = {
-        Enabled = false,
-        Length = 20, -- How far the look vector line extends in studs.
-        Thickness = 1,
-
-        -- Color Settings
-        Color = {
-            Visible = Color3.fromRGB(0, 225, 255),
-            Occluded = Color3.fromRGB(0, 120, 200),
-        },
-    },
-
-    --==================================// Skeleton ESP Settings //==================================--
-    Skeleton = {
-        Enabled = false,
-        Thickness = 1,
-
-        -- Color Settings
-        Color = {
-            Visible = Color3.fromRGB(255, 255, 255),
-            Occluded = Color3.fromRGB(180, 180, 180),
-            UseTeamColor = false,
-            FriendColor = Color3.fromRGB(0, 191, 255),
-        },
-    },
-
-    --==================================// Object ESP Settings //==================================--
-    Object = {
-        -- This section is a framework. You must add items to the 'TrackedObjects' list.
-        Enabled = false,
-        MaxDistance = 1000,
-        TrackedObjects = {
-            -- Example: Track all parts named "Flag"
-            -- {
-            --    Name = "Flag",
-            --    DisplayName = "Capture Point",
-            --    Color = Color3.fromRGB(255, 255, 0),
-            --    RequiresLineOfSight = false
-            -- }
-        },
-
-        -- Default drawing settings for objects
-        Text = {
-            Font = "Gotham",
-            FontSize = 16,
-            Thickness = 1,
-        }
-    },
-
-    --==================================// Performance & Debugging //==================================--
-    Performance = {
-        -- Settings to fine-tune performance vs. quality.
-        VisibilityCheck = "Raycast", -- "Raycast" for accurate checks, "None" to disable (improves performance).
-        RaycastParams = RaycastParams.new(), -- Pre-create RaycastParams for efficiency.
-    },
-}
-
--- Configure RaycastParams to ignore the local player's character and other transparent objects.
-Aura.Config.Performance.RaycastParams.FilterType = Enum.RaycastFilterType.Exclude
-
---//================================================================================================//
---//                                        UTILITY FUNCTIONS                                       //
---//================================================================================================//
-
-local Utils = {}
-
---- Converts a 3D world position to a 2D screen coordinate.
--- @param position (Vector3) The 3D point in the world.
--- @return Vector2: The 2D screen coordinate.
--- @return boolean: Whether the point is on the screen.
-function Utils.WorldToScreenPoint(position)
-    if not _private.Camera then return Vector2.new(), false end
-
-    local screenPoint, onScreen = _private.Camera:WorldToScreenPoint(position)
-    return Vector2.new(screenPoint.X, screenPoint.Y), onScreen
+local DrawingContainer -- Parent for all GUI-based drawings
+if not IsUsingDrawingLib then
+    DrawingContainer = Instance.new("ScreenGui")
+    DrawingContainer.Name = "ESP_DrawingContainer_" .. tostring(math.random()):sub(3)
+    DrawingContainer.ResetOnSpawn = false
+    DrawingContainer.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    DrawingContainer.Parent = PlayerGui
 end
 
-
---- Checks if a 3D position is visible from the camera.
--- @param position (Vector3) The target position to check.
--- @param ignoreList (table) A list of instances to ignore in the raycast.
--- @return boolean: True if the position is visible, false otherwise.
-function Utils.IsPositionVisible(position, ignoreList)
-    if not _private.Camera or Aura.Config.Performance.VisibilityCheck == "None" then
-        return true
-    end
-
-    local cameraPosition = _private.Camera.CFrame.Position
-    local direction = (position - cameraPosition).Unit
-    local distance = (position - cameraPosition).Magnitude
-
-    -- Update the ignore list for this specific raycast
-    Aura.Config.Performance.RaycastParams.FilterDescendantsInstances = ignoreList
-
-    local result = Workspace:Raycast(cameraPosition, direction * distance, Aura.Config.Performance.RaycastParams)
-
-    -- If the raycast hits nothing, the position is visible.
-    return not result
-end
-
---- Retrieves a cached drawing object or creates a new one.
--- @param cache (table) The cache table (e.g., _private.PlayerDrawings).
--- @param key (any) The primary key (e.g., a Player object).
--- @param name (string) The name of the drawing (e.g., "Box", "Name").
--- @param type (string) The type of drawing to create (e.g., "Line", "Text").
--- @return Drawing: The cached or newly created drawing object.
-function Utils.GetOrCreateDrawing(cache, key, name, type)
-    if not cache[key] then
-        cache[key] = {}
-    end
-
-    if not cache[key][name] then
-        local newDrawing = Drawing.new(type)
-        cache[key][name] = newDrawing
-        return newDrawing
-    end
-
-    return cache[key][name]
-end
-
---- Removes all drawing objects associated with a key from the cache.
--- @param cache (table) The cache table.
--- @param key (any) The key to clear.
-function Utils.ClearDrawingsForKey(cache, key)
-    if cache[key] then
-        for _, drawing in pairs(cache[key]) do
-            if drawing then
-                drawing.Visible = false
-                drawing:Remove()
+function Drawing.new(type, properties)
+    if IsUsingDrawingLib then
+        local d = drawing.new(type)
+        if properties then
+            for prop, value in pairs(properties) do
+                d[prop] = value
             end
         end
-        cache[key] = nil
-    end
-end
+        return d
+    else
+        local obj
+        local billboard = Instance.new("BillboardGui")
+        billboard.AlwaysOnTop = true
+        billboard.Size = UDim2.fromOffset(0, 0)
+        billboard.ClipsDescendants = false
 
---//================================================================================================//
---//                                 SKELETON DEFINITION & LOGIC                                  //
---//================================================================================================//
-
--- Defines the connections between character parts for skeleton ESP.
-local SKELETON_BONES = {
-    -- Torso
-    { "Head", "UpperTorso" },
-    { "UpperTorso", "LowerTorso" },
-    { "UpperTorso", "LeftUpperArm" },
-    { "UpperTorso", "RightUpperArm" },
-    { "LowerTorso", "LeftUpperLeg" },
-    { "LowerTorso", "RightUpperLeg" },
-
-    -- Left Arm
-    { "LeftUpperArm", "LeftLowerArm" },
-    { "LeftLowerArm", "LeftHand" },
-
-    -- Right Arm
-    { "RightUpperArm", "RightLowerArm" },
-    { "RightLowerArm", "RightHand" },
-
-    -- Left Leg
-    { "LeftUpperLeg", "LeftLowerLeg" },
-    { "LeftLowerLeg", "LeftFoot" },
-
-    -- Right Leg
-    { "RightUpperLeg", "RightLowerLeg" },
-    { "RightLowerLeg", "RightFoot" },
-}
-
---- Draws the skeleton for a given character.
--- @param player (Player) The target player.
--- @param character (Model) The character model.
--- @param color (Color3) The color to draw the skeleton.
-function Utils.DrawSkeleton(player, character, color)
-    local cfg = Aura.Config.Skeleton
-    if not cfg.Enabled then return end
-
-    local drawings = _private.PlayerDrawings[player]
-    if not drawings then return end
-
-    for i, boneParts in ipairs(SKELETON_BONES) do
-        local part1 = character:FindFirstChild(boneParts[1])
-        local part2 = character:FindFirstChild(boneParts[2])
-
-        if part1 and part2 then
-            local pos1, onScreen1 = Utils.WorldToScreenPoint(part1.Position)
-            local pos2, onScreen2 = Utils.WorldToScreenPoint(part2.Position)
-
-            local drawingName = "SkeletonBone_" .. i
-            local line = Utils.GetOrCreateDrawing(_private.PlayerDrawings, player, drawingName, "Line")
-
-            if onScreen1 and onScreen2 then
-                line.Visible = true
-                line.Color = color
-                line.Thickness = cfg.Thickness
-                line.From = pos1
-                line.To = pos2
-            else
-                line.Visible = false
-            end
+        if type == "Text" then
+            obj = Instance.new("TextLabel")
+            obj.BackgroundTransparency = 1
+            obj.TextSize = 14
+            obj.Font = Enum.Font.SourceSans
+            obj.TextColor3 = properties and properties.Color or Color3.new(1, 1, 1)
+            obj.Text = properties and properties.Text or ""
+            obj.Parent = billboard
+        elseif type == "Line" then
+            obj = Instance.new("Frame")
+            obj.AnchorPoint = Vector2.new(0.5, 0.5)
+            obj.BackgroundColor3 = properties and properties.Color or Color3.new(1, 1, 1)
+            obj.BorderSizePixel = 0
+            obj.Parent = billboard
+        elseif type == "Quad" then -- For boxes and health bars
+            obj = Instance.new("Frame")
+            obj.BackgroundTransparency = 1
+            obj.BorderSizePixel = 1
+            obj.BorderColor3 = properties and properties.Color or Color3.new(1, 1, 1)
+            obj.Parent = billboard
+        elseif type == "Image" then
+            obj = Instance.new("ImageLabel")
+            obj.BackgroundTransparency = 1
+            obj.Image = properties.Image
+            obj.Parent = billboard
         end
-    end
-end
 
---//================================================================================================//
---//                                     CORE DRAWING ROUTINES                                      //
---//================================================================================================//
-
-local Draw = {}
-
---- Master function to update all ESP elements for a single player.
--- @param player (Player) The player to update ESP for.
-function Draw.UpdatePlayerESP(player)
-    local character = player.Character
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-
-    -- Validation checks
-    if not humanoid or humanoid.Health <= 0 then
-        Utils.ClearDrawingsForKey(_private.PlayerDrawings, player)
-        return
-    end
-
-    local head = character:FindFirstChild("Head")
-    if not head then return end
-
-    local distance = (_private.LocalPlayer.Character.PrimaryPart.Position - head.Position).Magnitude
-    if Aura.Config.Player.MaxDistance > 0 and distance > Aura.Config.Player.MaxDistance then
-        Utils.ClearDrawingsForKey(_private.PlayerDrawings, player)
-        return
-    end
-
-    -- Determine visibility and color
-    local isVisible = Utils.IsPositionVisible(head.Position, { _private.LocalPlayer.Character, character })
-    local color = Draw.GetPlayerColor(player, isVisible)
-
-    -- Calculate screen position and box size
-    local headPos, onScreen = Utils.WorldToScreenPoint(head.Position)
-    local rootPos = character.PrimaryPart and Utils.WorldToScreenPoint(character.PrimaryPart.Position)
-    if not onScreen then
-        Utils.ClearDrawingsForKey(_private.PlayerDrawings, player)
-        return
-    end
-
-    -- The box height is calculated based on the distance between head and feet on screen.
-    -- Width is calculated to maintain a realistic aspect ratio.
-    local boxHeight = math.abs(headPos.Y - rootPos.Y)
-    local boxWidth = boxHeight / 2
-
-    -- Top-left corner of the 2D box
-    local boxTopLeft = Vector2.new(headPos.X - boxWidth / 2, headPos.Y - boxHeight / 10)
-
-    -- Call individual drawing functions
-    Draw.Box(player, boxTopLeft, Vector2.new(boxWidth, boxHeight), color)
-    Draw.Name(player, character, boxTopLeft, boxWidth, color, isVisible)
-    Draw.Distance(player, boxTopLeft, boxHeight, distance, isVisible)
-    Draw.HealthBar(player, humanoid, boxTopLeft, boxHeight, color)
-    Draw.Tracer(player, headPos, color)
-    Draw.HeadDot(player, headPos, color)
-    Draw.LookVector(player, head, isVisible)
-
-    -- Call skeleton drawing last
-    local skeletonColor = isVisible and Aura.Config.Skeleton.Color.Visible or Aura.Config.Skeleton.Color.Occluded
-    Utils.DrawSkeleton(player, character, skeletonColor)
-end
-
---- Determines the appropriate color for a player based on config.
--- @param player (Player) The target player.
--- @param isVisible (boolean) Whether the player is visible.
--- @return Color3: The calculated color.
-function Draw.GetPlayerColor(player, isVisible)
-    local cfg = Aura.Config.Box.Color -- Use Box color as the base
-    if cfg.UseTeamColor and player.TeamColor then
-        return player.TeamColor.Color
-    end
-
-    if _private.LocalPlayer:IsFriendsWith(player.UserId) and not Aura.Config.Player.IgnoreFriends then
-        return cfg.FriendColor
-    end
-
-    return isVisible and cfg.Visible or cfg.Occluded
-end
-
---- Draws a 2D or 3D box around the player.
-function Draw.Box(player, topLeft, size, color)
-    local cfg = Aura.Config.Box
-    if not cfg.Enabled then return end
-
-    if cfg.Mode == "2D" then
-        local boxPoints = {
-            topLeft,
-            topLeft + Vector2.new(size.X, 0),
-            topLeft + size,
-            topLeft + Vector2.new(0, size.Y),
-            topLeft
+        local drawingWrapper = {
+            _guiObject = obj,
+            _billboard = billboard,
+            _type = type,
+            Visible = true,
+            Color = properties and properties.Color,
         }
+        
+        -- Compatibility setters/getters
+        setmetatable(drawingWrapper, {
+            __newindex = function(self, index, value)
+                if rawget(self, "_guiObject") then
+                    if index == "Visible" then
+                        self._billboard.Enabled = value
+                    elseif index == "Color" then
+                        if self._type == "Text" then self._guiObject.TextColor3 = value
+                        elseif self._type == "Line" then self._guiObject.BackgroundColor3 = value
+                        elseif self._type == "Quad" then self._guiObject.BorderColor3 = value
+                        end
+                        rawset(self, "Color", value)
+                    elseif index == "Text" and self._type == "Text" then
+                        self._guiObject.Text = value
+                    elseif index == "From" and self._type == "Line" then
+                        rawset(self, "From", value)
+                    elseif index == "To" and self._type == "Line" then
+                        rawset(self, "To", value)
+                    elseif index == "Size" and (self._type == "Quad" or self._type == "Text") then
+                         self._guiObject.Size = UDim2.fromOffset(value.X, value.Y)
+                    elseif index == "Position" and (self._type == "Quad" or self._type == "Text") then
+                         self._guiObject.Position = UDim2.fromOffset(value.X, value.Y)
+                    else
+                        rawset(self, index, value)
+                    end
+                else
+                    rawset(self, index, value)
+                end
+            end,
+            __index = function(self, index)
+                if index == "Remove" or index == "Destroy" then
+                    return function()
+                        if self._billboard then self._billboard:Destroy() end
+                    end
+                end
+                return rawget(self, index)
+            end
+        })
 
-        for i = 1, 4 do
-            local line = Utils.GetOrCreateDrawing(_private.PlayerDrawings, player, "BoxLine_" .. i, "Line")
-            line.Visible = true
-            line.From = boxPoints[i]
-            line.To = boxPoints[i+1]
-            line.Color = color
-            line.Thickness = cfg.Thickness
+        billboard.Parent = DrawingContainer
+        return drawingWrapper
+    end
+end
+
+--//============================================================================//
+--//                             CORE ESP LOGIC                                 //
+--//============================================================================//
+
+function ESP:_cleanupInstance(instance)
+    local data = TrackedObjects[instance]
+    if not data then return end
+
+    if data.drawings then
+        for _, drawing in pairs(data.drawings) do
+            if drawing.Remove then drawing:Remove() else drawing:Destroy() end
         end
+    end
 
-        -- Handle fill
-        local fill = Utils.GetOrCreateDrawing(_private.PlayerDrawings, player, "BoxFill", "Quad")
-        if cfg._2D.Fill then
-            fill.Visible = true
-            fill.Color = color
-            fill.Transparency = cfg._2D.FillTransparency
-            fill.PointA = boxPoints[1]
-            fill.PointB = boxPoints[2]
-            fill.PointC = boxPoints[3]
-            fill.PointD = boxPoints[4]
+    if data.connections then
+        for _, connection in ipairs(data.connections) do
+            connection:Disconnect()
+        end
+    end
+
+    TrackedObjects[instance] = nil
+end
+
+function ESP:_get3DInfo(instance)
+    if not instance or not instance:IsA("PVInstance") then
+        local parentPV = instance and instance:FindFirstAncestorWhichIsA("PVInstance")
+        if parentPV then
+            return parentPV.CFrame, parentPV:GetExtentsSize()
         else
-            fill.Visible = false
+            return nil, nil -- Cannot determine position
         end
-
-    elseif cfg.Mode == "3D" then
-        -- NOTE: 3D Box ESP is more complex and less common.
-        -- This implementation is a placeholder to demonstrate the concept.
-        -- A full implementation would require calculating all 8 corners of the character's CFrame bounding box.
-        -- For simplicity, we will skip the full 3D implementation in this example.
-        -- To implement, you would get character:GetBoundingBox() and draw 12 lines in 3D space.
     end
-end
-
-
---- Draws the player's name.
-function Draw.Name(player, character, boxTopLeft, boxWidth, boxColor, isVisible)
-    local cfg = Aura.Config.Name
-    if not cfg.Enabled then return end
-
-    local text = Utils.GetOrCreateDrawing(_private.PlayerDrawings, player, "NameText", "Text")
-    text.Visible = true
-    text.Text = player.DisplayName
-    text.Font = Enum.Font[cfg.Font]
-    text.Size = cfg.FontSize
-    text.Outline = cfg.Thickness > 0
-    text.OutlineColor = Color3.new(0,0,0)
-
-    -- Determine text color
-    local textColor
-    if cfg.Color.UseTeamColor and player.TeamColor then
-        textColor = player.TeamColor.Color
-    elseif _private.LocalPlayer:IsFriendsWith(player.UserId) and not Aura.Config.Player.IgnoreFriends then
-        textColor = cfg.Color.FriendColor
-    else
-        textColor = isVisible and cfg.Color.Visible or cfg.Color.Occluded
+    
+    if instance:IsA("Model") then
+        return instance:GetBoundingBox()
     end
-    text.Color = textColor
-
-    -- Center the text above the box
-    local textBounds = Drawing.GetTextBounds(text.Text, text.Size, text.Font)
-    text.Position = Vector2.new(
-        boxTopLeft.X + (boxWidth / 2) - (textBounds.X / 2),
-        boxTopLeft.Y - textBounds.Y + cfg.PositionOffset.Y
-    )
-end
-
---- Draws the distance to the player.
-function Draw.Distance(player, boxTopLeft, boxHeight, distance, isVisible)
-    local cfg = Aura.Config.Distance
-    if not cfg.Enabled then return end
-
-    local text = Utils.GetOrCreateDrawing(_private.PlayerDrawings, player, "DistanceText", "Text")
-    text.Visible = true
-    text.Text = string.format("[%dM]", math.floor(distance))
-    text.Font = Enum.Font[cfg.Font]
-    text.Size = cfg.FontSize
-    text.Outline = cfg.Thickness > 0
-    text.OutlineColor = Color3.new(0,0,0)
-    text.Color = isVisible and cfg.Color.Visible or cfg.Color.Occluded
-
-    -- Center the text below the box
-    local textBounds = Drawing.GetTextBounds(text.Text, text.Size, text.Font)
-    text.Position = Vector2.new(
-        boxTopLeft.X + (text.Parent.Size.X / 2) - (textBounds.X / 2), -- This needs adjustment if box size is dynamic
-        boxTopLeft.Y + boxHeight + cfg.PositionOffset.Y
-    )
-end
-
---- Draws the player's health bar.
-function Draw.HealthBar(player, humanoid, boxTopLeft, boxHeight, color)
-    local cfg = Aura.Config.HealthBar
-    if not cfg.Enabled then return end
-
-    local healthPercent = humanoid.Health / humanoid.MaxHealth
-    local barHeight = boxHeight * healthPercent
-
-    -- Determine health color based on a gradient
-    local healthColor = cfg.HighHealthColor:Lerp(cfg.MediumHealthColor, 1 - (math.max(0.5, healthPercent) - 0.5) * 2)
-    if healthPercent < 0.5 then
-        healthColor = cfg.MediumHealthColor:Lerp(cfg.LowHealthColor, 1 - (healthPercent * 2))
+    
+    if instance:IsA("BasePart") then
+        return instance.CFrame, instance.Size
     end
-
-    -- Background of the health bar
-    local bgBar = Utils.GetOrCreateDrawing(_private.PlayerDrawings, player, "HealthBarBG", "Line")
-    bgBar.Visible = true
-    bgBar.Color = Color3.new(0, 0, 0)
-    bgBar.Thickness = cfg.Width + 2 -- Create a black outline
-    bgBar.From = boxTopLeft + Vector2.new(cfg.PositionOffset.X, 0)
-    bgBar.To = boxTopLeft + Vector2.new(cfg.PositionOffset.X, boxHeight)
-
-    -- Foreground (actual health)
-    local fgBar = Utils.GetOrCreateDrawing(_private.PlayerDrawings, player, "HealthBarFG", "Line")
-    fgBar.Visible = true
-    fgBar.Color = healthColor
-    fgBar.Thickness = cfg.Width
-    fgBar.From = boxTopLeft + Vector2.new(cfg.PositionOffset.X, boxHeight) -- Start from bottom
-    fgBar.To = boxTopLeft + Vector2.new(cfg.PositionOffset.X, boxHeight - barHeight) -- Go up
-end
-
---- Draws a tracer line to the player.
-function Draw.Tracer(player, targetPosition, color)
-    local cfg = Aura.Config.Tracer
-    if not cfg.Enabled then return end
-
-    local line = Utils.GetOrCreateDrawing(_private.PlayerDrawings, player, "TracerLine", "Line")
-    line.Visible = true
-    line.Color = color
-    line.Thickness = cfg.Thickness
-
-    local startPosition
-    local viewportSize = _private.Camera.ViewportSize
-    if cfg.Origin == "Bottom" then
-        startPosition = Vector2.new(viewportSize.X / 2, viewportSize.Y)
-    elseif cfg.Origin == "Center" then
-        startPosition = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
-    elseif cfg.Origin == "Mouse" then
-        startPosition = UserInputService:GetMouseLocation()
-    else
-        startPosition = Vector2.new(viewportSize.X / 2, viewportSize.Y) -- Default to bottom
-    end
-
-    line.From = startPosition
-    line.To = targetPosition
-end
-
---- Draws a dot on the player's head.
-function Draw.HeadDot(player, headPosition, color)
-    local cfg = Aura.Config.HeadDot
-    if not cfg.Enabled then return end
-
-    local dot = Utils.GetOrCreateDrawing(_private.PlayerDrawings, player, "HeadDot", "Circle")
-    dot.Visible = true
-    dot.Color = color
-    dot.Thickness = cfg.Radius / 4 -- Make outline proportional
-    dot.Radius = cfg.Radius
-    dot.Filled = cfg.Filled
-    dot.Position = headPosition
-end
-
---- Draws a line indicating where the player is looking.
-function Draw.LookVector(player, head, isVisible)
-    local cfg = Aura.Config.LookVector
-    if not cfg.Enabled then return end
-
-    local startPos = head.Position
-    local endPos = startPos + (head.CFrame.LookVector * cfg.Length)
-
-    local startScreen, onScreen1 = Utils.WorldToScreenPoint(startPos)
-    local endScreen, onScreen2 = Utils.WorldToScreenPoint(endPos)
-
-    local line = Utils.GetOrCreateDrawing(_private.PlayerDrawings, player, "LookVectorLine", "Line")
-    if onScreen1 and onScreen2 then
-        line.Visible = true
-        line.Color = isVisible and cfg.Color.Visible or cfg.Color.Occluded
-        line.Thickness = cfg.Thickness
-        line.From = startScreen
-        line.To = endScreen
-    else
-        line.Visible = false
-    end
+    
+    return instance.CFrame, instance.Size
 end
 
 
---- Master function to update all Object ESP.
-function Draw.UpdateObjectESP()
-    if not Aura.Config.Object.Enabled or #Aura.Config.Object.TrackedObjects == 0 then
-        -- Clean up any existing object drawings if disabled
-        for key, _ in pairs(_private.ObjectDrawings) do
-            Utils.ClearDrawingsForKey(_private.ObjectDrawings, key)
+function ESP:_updateDrawings(data, instance, cframe, size, onScreen, distance)
+    local settings = Settings[data.espType]
+    if not settings or not settings.Enabled then return end
+
+    local halfSize = size / 2
+    local corners = {
+        cframe * CFrame.new(halfSize.X, halfSize.Y, 0), -- Top-Right
+        cframe * CFrame.new(-halfSize.X, halfSize.Y, 0), -- Top-Left
+        cframe * CFrame.new(-halfSize.X, -halfSize.Y, 0), -- Bottom-Left
+        cframe * CFrame.new(halfSize.X, -halfSize.Y, 0), -- Bottom-Right
+    }
+
+    local screenCorners = {}
+    local minX, minY = math.huge, math.huge
+    local maxX, maxY = -math.huge, -math.huge
+
+    for _, cornerCF in ipairs(corners) do
+        local screenPos, inViewport = Camera:WorldToViewportPoint(cornerCF.Position)
+        if not inViewport then
+            -- Fallback for off-screen corners to keep box shape reasonable
+            local screenPosOnEdge = Camera:WorldToViewportPoint(cframe.Position)
+            minX, minY = screenPosOnEdge.X, screenPosOnEdge.Y
+            maxX, maxY = screenPosOnEdge.X, screenPosOnEdge.Y
+            break
         end
+        table.insert(screenCorners, Vector2.new(screenPos.X, screenPos.Y))
+        minX = math.min(minX, screenPos.X)
+        minY = math.min(minY, screenPos.Y)
+        maxX = math.max(maxX, screenPos.X)
+        maxY = math.max(maxY, screenPos.Y)
+    end
+
+    local boxWidth = maxX - minX
+    local boxHeight = maxY - minY
+    
+    local nameText = instance.Name
+    if data.espType == "Players" and instance.Parent then
+        nameText = instance.Parent.Name
+    end
+
+    -- Update Box
+    if data.drawings.Box and settings.Box then
+        data.drawings.Box.Visible = onScreen
+        data.drawings.Box.Color = settings.BoxColor
+        data.drawings.Box.Position = Vector2.new(minX, minY)
+        data.drawings.Box.Size = Vector2.new(boxWidth, boxHeight)
+    end
+
+    -- Update Name
+    if data.drawings.Name and settings.Name then
+        data.drawings.Name.Visible = onScreen
+        data.drawings.Name.Color = settings.NameColor
+        data.drawings.Name.Text = nameText
+        data.drawings.Name.Position = Vector2.new(minX + boxWidth / 2, minY - 16)
+    end
+
+    -- Update Distance
+    if data.drawings.Distance and settings.Distance then
+        data.drawings.Distance.Visible = onScreen
+        data.drawings.Distance.Text = `[{math.floor(distance)}m]`
+        data.drawings.Distance.Position = Vector2.new(minX + boxWidth / 2, maxY + 2)
+    end
+
+    -- Update Tracer
+    if data.drawings.Tracer and settings.Tracer then
+        data.drawings.Tracer.Visible = onScreen
+        data.drawings.Tracer.Color = settings.TracerColor
+        data.drawings.Tracer.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y) -- Bottom-center of screen
+        data.drawings.Tracer.To = Vector2.new(minX + boxWidth / 2, maxY) -- Bottom-center of box
+    end
+    
+    -- Update Healthbar (Player specific)
+    if data.drawings.Healthbar and settings.Healthbar and data.humanoid then
+        local humanoid = data.humanoid
+        local health = humanoid.Health
+        local maxHealth = humanoid.MaxHealth
+        local healthPercent = math.clamp(health / maxHealth, 0, 1)
+
+        data.drawings.Healthbar.Visible = onScreen
+        data.drawings.HealthbarBackground.Visible = onScreen
+
+        local healthbarHeight = boxHeight
+        local healthbarWidth = 4
+        
+        local healthColor = settings.Healthbar_High
+        if healthPercent < 0.7 then healthColor = settings.Healthbar_Medium end
+        if healthPercent < 0.35 then healthColor = settings.Healthbar_Low end
+
+        data.drawings.HealthbarBackground.Position = Vector2.new(minX - healthbarWidth - 4, minY)
+        data.drawings.HealthbarBackground.Size = Vector2.new(healthbarWidth, healthbarHeight)
+        
+        data.drawings.Healthbar.Position = Vector2.new(minX - healthbarWidth - 4, minY + healthbarHeight * (1 - healthPercent))
+        data.drawings.Healthbar.Size = Vector2.new(healthbarWidth, healthbarHeight * healthPercent)
+        data.drawings.Healthbar.Color = healthColor
+    end
+end
+
+function ESP:_setVisibility(data, visible)
+    for _, drawing in pairs(data.drawings) do
+        drawing.Visible = visible
+    end
+end
+
+
+function ESP:_trackInstance(instance, espType)
+    if TrackedObjects[instance] then return end
+    
+    local settings = Settings[espType]
+    if not settings then 
+        warn(`[ESP] Unknown ESP type: '{espType}'. Aborting tracking for '{instance.Name}'.`)
         return
     end
 
-    local trackedInstances = {}
+    -- Create tracker data table
+    local data = {
+        espType = espType,
+        drawings = {},
+        connections = {},
+        lastPosition = Vector3.new(),
+    }
+    TrackedObjects[instance] = data
 
-    -- Find all instances in the workspace that match the tracking criteria
-    for _, objConfig in ipairs(Aura.Config.Object.TrackedObjects) do
-        for _, descendant in ipairs(Workspace:GetDescendants()) do
-            if descendant:IsA("BasePart") and descendant.Name == objConfig.Name then
-                table.insert(trackedInstances, { Instance = descendant, Config = objConfig })
+    -- Create drawing objects
+    if settings.Box then
+        data.drawings.Box = Drawing.new("Quad", { Color = settings.BoxColor, Visible = false })
+    end
+    if settings.Name then
+        data.drawings.Name = Drawing.new("Text", { Color = settings.NameColor, Visible = false, Size = 14, Center = true })
+    end
+    if settings.Distance then
+        data.drawings.Distance = Drawing.new("Text", { Color = settings.NameColor, Visible = false, Size = 12, Center = true })
+    end
+
+    -- Add player-specific drawings and connections
+    if espType == "Players" then
+        if settings.Tracer then
+            data.drawings.Tracer = Drawing.new("Line", { Color = settings.TracerColor, Visible = false, Thickness = 1 })
+        end
+        
+        if settings.Healthbar then
+            data.drawings.HealthbarBackground = Drawing.new("Quad", { Color = Color3.new(0.1, 0.1, 0.1), Visible = false })
+            data.drawings.Healthbar = Drawing.new("Quad", { Color = settings.Healthbar_High, Visible = false })
+        end
+
+        local humanoid = instance:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            data.humanoid = humanoid
+            table.insert(data.connections, humanoid:GetPropertyChangedSignal("Health"):Connect(function()
+                -- Health changes frequently, no need for full redraw, just flag for update
+                data.forceUpdate = true
+            end))
+            table.insert(data.connections, humanoid.Died:Connect(function()
+                self:_cleanupInstance(instance)
+            end))
+        end
+    end
+
+    -- Create cleanup connection
+    table.insert(data.connections, instance.AncestryChanged:Connect(function(_, parent)
+        if not parent then
+            self:_cleanupInstance(instance)
+        end
+    end))
+end
+
+
+--//============================================================================//
+--//                         PUBLIC API & INITIALIZATION                        //
+--//============================================================================//
+
+--// Main Update Loop
+function ESP:Start()
+    if self.Started then return end
+    self.Started = true
+    
+    local frameCounter = 0
+    GlobalConnections.RenderStepped = RunService.RenderStepped:Connect(function()
+        if not Settings.Enabled then
+            if self.WasEnabled then
+                for _, data in pairs(TrackedObjects) do
+                    self:_setVisibility(data, false)
+                end
+                self.WasEnabled = false
+            end
+            return
+        end
+        self.WasEnabled = true
+
+        frameCounter = frameCounter + 1
+        if Settings.UpdateInterval > 0 and frameCounter % (Settings.UpdateInterval + 1) ~= 0 then
+            return
+        end
+
+        local cameraCF = Camera.CFrame
+        
+        for instance, data in pairs(TrackedObjects) do
+            -- Basic validity checks
+            if not instance or not instance.Parent then
+                self:_cleanupInstance(instance)
+                continue
+            end
+            
+            local config = Settings[data.espType]
+            if not config or not config.Enabled then
+                self:_setVisibility(data, false)
+                continue
+            end
+            
+            -- Player-specific team check
+            if data.espType == "Players" and config.TeamCheck and instance.Parent then
+                local player = Players:GetPlayerFromCharacter(instance)
+                if player and player.Team == LocalPlayer.Team then
+                    self:_setVisibility(data, false)
+                    continue
+                end
+            end
+            
+            -- Get 3D position and size
+            local cframe, size = self:_get3DInfo(instance)
+            if not cframe then
+                self:_setVisibility(data, false)
+                continue
+            end
+
+            -- Check distance and visibility
+            local distance = (cameraCF.Position - cframe.Position).Magnitude
+            if distance > Settings.MaxDistance then
+                self:_setVisibility(data, false)
+                continue
+            end
+            
+            local screenPos, onScreen = Camera:WorldToViewportPoint(cframe.Position)
+            if onScreen then
+                 if not data.lastVisibleState then
+                    -- Fade-in logic
+                    if Settings.FadeInTime > 0 then
+                        for _, drawing in pairs(data.drawings) do
+                            if drawing.Transparency then -- Drawing lib property
+                                TweenService:Create(drawing, TweenInfo.new(Settings.FadeInTime), { Transparency = 0 }):Play()
+                            end
+                        end
+                    end
+                 end
+                self:_updateDrawings(data, instance, cframe, size, true, distance)
+                data.lastVisibleState = true
+            else
+                self:_setVisibility(data, false)
+                data.lastVisibleState = false
+            end
+        end
+    end)
+end
+
+function ESP:Stop()
+    if not self.Started then return end
+    self.Started = false
+    
+    for _, connection in pairs(GlobalConnections) do
+        connection:Disconnect()
+    end
+    GlobalConnections = {}
+    
+    local instancesToClean = {}
+    for instance in pairs(TrackedObjects) do
+        table.insert(instancesToClean, instance)
+    end
+    for _, instance in ipairs(instancesToClean) do
+        self:_cleanupInstance(instance)
+    end
+
+    if DrawingContainer then
+        DrawingContainer:Destroy()
+        DrawingContainer = nil
+    end
+
+    if self.MenuGui then
+        self.MenuGui:Destroy()
+        self.MenuGui = nil
+    end
+end
+
+-- Adds ESP for all current and future players.
+function ESP:AddPlayerESP()
+    local function handlePlayer(player)
+        local function handleCharacter(character)
+            -- Wait for the character's primary part to ensure it's positioned correctly.
+            local head = character:WaitForChild("Head", 5)
+            if not head or player == LocalPlayer then return end
+
+            self:_trackInstance(character, "Players")
+        end
+
+        player.CharacterAdded:Connect(handleCharacter)
+        if player.Character then
+            handleCharacter(player.Character)
+        end
+
+        player.CharacterRemoving:Connect(function(character)
+            self:_cleanupInstance(character)
+        end)
+    end
+    
+    GlobalConnections.PlayerAdded = Players.PlayerAdded:Connect(handlePlayer)
+    GlobalConnections.PlayerRemoving = Players.PlayerRemoving:Connect(function(player)
+        if player.Character then
+            self:_cleanupInstance(player.Character)
+        end
+    end)
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        handlePlayer(player)
+    end
+end
+
+-- Adds ESP for all descendants of a given folder/service.
+function ESP:AddFolderESP(parentInstance)
+    if not parentInstance or not parentInstance:IsA("Instance") then
+        warn("[ESP] AddFolderESP requires a valid Instance.")
+        return
+    end
+
+    local function handleDescendant(descendant)
+        -- We only care about things we can visually represent.
+        if descendant:IsA("PVInstance") and not descendant:IsA("Camera") and not descendant:IsA("WorldRoot") then
+            -- Avoid tracking parts of player characters if Player ESP is on
+            local player = Players:GetPlayerFromCharacter(descendant)
+            if not player then
+                self:_trackInstance(descendant, "Instances")
             end
         end
     end
 
-    -- Create a set of current objects to find ones that were removed
-    local currentObjectKeys = {}
+    -- Connect to future additions/removals
+    GlobalConnections[parentInstance] = {
+        Added = parentInstance.DescendantAdded:Connect(handleDescendant),
+        Removing = parentInstance.DescendantRemoving:Connect(function(descendant)
+            self:_cleanupInstance(descendant)
+        end)
+    }
 
-    -- Draw ESP for each found instance
-    for _, item in ipairs(trackedInstances) do
-        local instance = item.Instance
-        local config = item.Config
-        local key = instance:GetFullName() -- Use full name as a unique key
-        table.insert(currentObjectKeys, key)
-
-        local distance = (_private.Camera.CFrame.Position - instance.Position).Magnitude
-        if Aura.Config.Object.MaxDistance > 0 and distance > Aura.Config.Object.MaxDistance then
-            Utils.ClearDrawingsForKey(_private.ObjectDrawings, key)
-            continue
-        end
-
-        local screenPos, onScreen = Utils.WorldToScreenPoint(instance.Position)
-        if not onScreen then
-            Utils.ClearDrawingsForKey(_private.ObjectDrawings, key)
-            continue
-        end
-
-        local isVisible = true
-        if config.RequiresLineOfSight then
-            isVisible = Utils.IsPositionVisible(instance.Position, { _private.LocalPlayer.Character })
-        end
-
-        if not isVisible then
-            Utils.ClearDrawingsForKey(_private.ObjectDrawings, key)
-            continue
-        end
-
-        -- Draw text for the object
-        local textCfg = Aura.Config.Object.Text
-        local text = Utils.GetOrCreateDrawing(_private.ObjectDrawings, key, "ObjectText", "Text")
-        text.Visible = true
-        text.Text = string.format("%s\n[%dM]", config.DisplayName or instance.Name, math.floor(distance))
-        text.Font = Enum.Font[textCfg.Font]
-        text.Size = textCfg.FontSize
-        text.Color = config.Color or Color3.new(1,1,1)
-        text.Outline = textCfg.Thickness > 0
-        text.OutlineColor = Color3.new(0,0,0)
-
-        local textBounds = Drawing.GetTextBounds(text.Text, text.Size, text.Font)
-        text.Position = screenPos - Vector2.new(textBounds.X / 2, textBounds.Y / 2)
-    end
-
-    -- Clean up drawings for objects that no longer exist or are out of range
-    local currentObjectSet = {}
-    for _, v in ipairs(currentObjectKeys) do currentObjectSet[v] = true end
-
-    for key, _ in pairs(_private.ObjectDrawings) do
-        if not currentObjectSet[key] then
-            Utils.ClearDrawingsForKey(_private.ObjectDrawings, key)
-        end
+    -- Handle existing descendants
+    for _, descendant in ipairs(parentInstance:GetDescendants()) do
+        handleDescendant(descendant)
     end
 end
 
-
---//================================================================================================//
---//                                     MAIN UPDATE LOOP & CONTROL                                 //
---//================================================================================================//
-
---- The core render loop function, called every frame.
-function Aura.OnRenderStep(deltaTime)
-    if not _private.IsRunning or not Aura.Config.Enabled then
-        -- If disabled, ensure all drawings are hidden
-        for player, _ in pairs(_private.PlayerDrawings) do
-            Utils.ClearDrawingsForKey(_private.PlayerDrawings, player)
+-- Updates a setting value.
+function ESP:SetConfig(category, key, value)
+    if category == "Global" then
+        if Settings[key] ~= nil then
+            Settings[key] = value
         end
-        return
+    elseif Settings[category] and Settings[category][key] ~= nil then
+        Settings[category][key] = value
+    else
+        warn(`[ESP] Invalid setting: {category}.{key}`)
     end
+end
 
-    -- Update camera reference in case it changes
-    _private.Camera = Workspace.CurrentCamera
+--//============================================================================//
+--//                                 GUI MENU                                   //
+--//============================================================================//
 
-    -- Update Player ESP
-    if Aura.Config.Player.Enabled then
-        local validPlayers = {}
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player.Character and player ~= _private.LocalPlayer or not Aura.Config.Player.IgnoreSelf then
-                if not (Aura.Config.Player.IgnoreTeam and player.Team == _private.LocalPlayer.Team) then
-                    if not (Aura.Config.Player.IgnoreFriends and _private.LocalPlayer:IsFriendsWith(player.UserId)) then
-                        table.insert(validPlayers, player)
-                        Draw.UpdatePlayerESP(player)
+function ESP:CreateMenu()
+    if self.MenuGui or not Settings.Menu.Enabled then return end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "ESP_Menu"
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    local main = Instance.new("Frame")
+    main.Size = UDim2.fromOffset(250, 350)
+    main.Position = UDim2.fromScale(0.5, 0.5)
+    main.AnchorPoint = Vector2.new(0.5, 0.5)
+    main.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    main.BorderColor3 = Color3.fromRGB(80, 80, 80)
+    main.Visible = false
+    main.Draggable = true
+    main.Active = true
+    main.Parent = gui
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    title.Text = "ESP Library Menu"
+    title.Font = Enum.Font.SourceSansBold
+    title.TextColor3 = Color3.new(1,1,1)
+    title.TextSize = 16
+    title.Parent = main
+
+    local list = Instance.new("UIListLayout")
+    list.Padding = UDim.new(0, 5)
+    list.SortOrder = Enum.SortOrder.LayoutOrder
+    list.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    list.Parent = main
+
+    local function createToggle(text, category, key, layoutOrder)
+        local button = Instance.new("TextButton")
+        button.LayoutOrder = layoutOrder
+        button.Size = UDim2.new(0.9, 0, 0, 25)
+        button.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+        button.Font = Enum.Font.SourceSans
+        button.TextSize = 14
+        button.TextColor3 = Color3.new(1,1,1)
+        button.Parent = main
+
+        local function updateText()
+            local value = (category == "Global" and Settings[key]) or Settings[category][key]
+            button.Text = text .. ": " .. (value and "ON" or "OFF")
+            button.BackgroundColor3 = value and Color3.fromRGB(70, 110, 70) or Color3.fromRGB(110, 70, 70)
+        end
+
+        button.MouseButton1Click:Connect(function()
+            local currentVal = (category == "Global" and Settings[key]) or Settings[category][key]
+            self:SetConfig(category, key, not currentVal)
+            updateText()
+        end)
+        
+        updateText()
+        return button
+    end
+    
+    -- Add padding at the top
+    local padding = Instance.new("Frame")
+    padding.Size = UDim2.new(1, 0, 0, 35)
+    padding.BackgroundTransparency = 1
+    padding.LayoutOrder = 0
+    padding.Parent = main
+
+    createToggle("Master ESP", "Global", "Enabled", 1)
+    createToggle("Player ESP", "Players", "Enabled", 2)
+    createToggle("└ Player Boxes", "Players", "Box", 3)
+    createToggle("└ Player Names", "Players", "Name", 4)
+    createToggle("└ Player Healthbars", "Players", "Healthbar", 5)
+    createToggle("└ Player Tracers", "Players", "Tracer", 6)
+    createToggle("└ Team Check", "Players", "TeamCheck", 7)
+    createToggle("Instance ESP", "Instances", "Enabled", 8)
+    createToggle("└ Instance Boxes", "Instances", "Box", 9)
+    createToggle("└ Instance Names", "Instances", "Name", 10)
+
+    -- Keybind to toggle menu visibility
+    GlobalConnections.MenuToggle = UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if input.KeyCode == Settings.Menu.ToggleKeybind then
+            main.Visible = not main.Visible
+        end
+    end)
+    
+    self.MenuGui = gui
+    gui.Parent = PlayerGui
+end
+
+
+--//============================================================================//
+--//                       INITIALIZATION & RETURN                              //
+--//============================================================================//
+
+do
+    local function init()
+        -- Handle master toggle keybind
+        GlobalConnections.MasterToggle = UserInputService.InputBegan:Connect(function(input, gpe)
+            if gpe then return end
+            if input.KeyCode == Settings.ToggleKeybind then
+                Settings.Enabled = not Settings.Enabled
+                if self.MenuGui then -- Update the master toggle button in the GUI if it exists
+                    for _, child in ipairs(self.MenuGui.Frame:GetChildren()) do
+                        if child:IsA("TextButton") and child.Text:match("Master ESP") then
+                            local value = Settings.Enabled
+                            child.Text = "Master ESP: " .. (value and "ON" or "OFF")
+                            child.BackgroundColor3 = value and Color3.fromRGB(70, 110, 70) or Color3.fromRGB(110, 70, 70)
+                        end
                     end
                 end
             end
-        end
+        end)
 
-        -- Cleanup drawings for players who have left or are no longer valid
-        for player, _ in pairs(_private.PlayerDrawings) do
-            local isValid = false
-            for _, validPlayer in ipairs(validPlayers) do
-                if player == validPlayer then
-                    isValid = true
-                    break
-                end
-            end
-            if not isValid then
-                Utils.ClearDrawingsForKey(_private.PlayerDrawings, player)
-            end
-        end
+        ESP:Start()
+        ESP:CreateMenu()
     end
-
-    -- Update Object ESP
-    if Aura.Config.Object.Enabled then
-        Draw.UpdateObjectESP()
+    
+    -- Allow the script to be re-required without breaking everything.
+    if getfenv()._ESP_INITIALIZED then
+        getfenv()._ESP_INITIALIZED:Stop()
     end
+    
+    init()
+    getfenv()._ESP_INITIALIZED = ESP
 end
 
---//================================================================================================//
---//                                         PUBLIC API                                             //
---//================================================================================================//
-
---- Initializes the Aura ESP library.
--- Sets up local player, camera, and connects to the render loop.
--- This must be called before the ESP will function.
-function Aura.Init()
-    if _private.IsInitialized then
-        warn("[Aura] Library is already initialized.")
-        return
-    end
-
-    _private.LocalPlayer = Players.LocalPlayer
-    if not _private.LocalPlayer then
-        -- Wait for the local player to be available
-        Players.PlayerAdded:Wait()
-        _private.LocalPlayer = Players.LocalPlayer
-    end
-
-    -- Ensure character exists before setting up raycast filter
-    if not _private.LocalPlayer.Character then
-        _private.LocalPlayer.CharacterAdded:Wait()
-    end
-    Aura.Config.Performance.RaycastParams.FilterDescendantsInstances = {_private.LocalPlayer.Character}
-
-
-    _private.Camera = Workspace.CurrentCamera
-
-    -- Connect the main loop
-    local connection = RunService:BindToRenderStep("AuraESP_Update", Enum.RenderPriority.Character.Value + 1, Aura.OnRenderStep)
-    table.insert(_private.Connections, connection) -- Although BindToRenderStep doesn't return a connection, we use UnbindFromRenderStep to remove.
-
-    _private.IsInitialized = true
-    _private.IsRunning = true
-
-    -- Handle player leaving to clean up their drawings
-    local playerRemovingConn = Players.PlayerRemoving:Connect(function(player)
-        Utils.ClearDrawingsForKey(_private.PlayerDrawings, player)
-    end)
-    table.insert(_private.Connections, playerRemovingConn)
-
-    print("[Aura] ESP Library Initialized. Version " .. Aura.VERSION)
-end
-
---- Toggles the ESP on or off globally.
--- @param state (boolean) True to enable, false to disable.
-function Aura.SetEnabled(state)
-    Aura.Config.Enabled = state
-    if not state then
-        -- When turning off, immediately clear all drawings.
-        for player, _ in pairs(_private.PlayerDrawings) do
-            Utils.ClearDrawingsForKey(_private.PlayerDrawings, player)
-        end
-        for key, _ in pairs(_private.ObjectDrawings) do
-            Utils.ClearDrawingsForKey(_private.ObjectDrawings, key)
-        end
-    end
-    print("[Aura] ESP set to: " .. tostring(state))
-end
-
---- Destroys the library instance, disconnecting all events and cleaning up.
--- This should be called when the script is being terminated to prevent memory leaks.
-function Aura.Destroy()
-    if not _private.IsInitialized then return end
-
-    -- Disconnect all RBXScriptConnections
-    for _, conn in ipairs(_private.Connections) do
-        if typeof(conn) == "RBXScriptConnection" then
-            conn:Disconnect()
-        end
-    end
-    table.clear(_private.Connections)
-
-    -- Unbind the render step function
-    RunService:UnbindFromRenderStep("AuraESP_Update")
-
-    -- Clean up all existing drawing objects
-    for player, _ in pairs(_private.PlayerDrawings) do
-        Utils.ClearDrawingsForKey(_private.PlayerDrawings, player)
-    end
-    table.clear(_private.PlayerDrawings)
-
-    for key, _ in pairs(_private.ObjectDrawings) do
-        Utils.ClearDrawingsForKey(_private.ObjectDrawings, key)
-    end
-    table.clear(_private.ObjectDrawings)
-
-
-    _private.IsInitialized = false
-    _private.IsRunning = false
-
-    print("[Aura] Library destroyed and cleaned up.")
-end
-
---//================================================================================================//
---//                                           RETURN                                               //
---//================================================================================================//
-
-return Aura
+return ESP
