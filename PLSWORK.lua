@@ -1,5 +1,5 @@
 --[[
-    Alexchad UI Library - v2 (Improved)
+    Alexchad UI Library - v3 (FRESH BUILD - if you see this, the file updated correctly)
     
     Changes from v1:
     - Close button now on the far right, Minimize to its left (standard window layout)
@@ -15,6 +15,8 @@
       the window shrinks below the content's needed size.
     
     Credit: Alexchad (original). Improved version.
+    
+    >>> PART 1 OF 3 — paste this, then PART2, then PART3 into the same file <<<
 ]]
 
 local AlexchadLibrary = {}
@@ -53,7 +55,7 @@ local function CleanupAllBlur()
 end
 
 -- ============================================================
--- Themes (same as v1)
+-- Themes
 -- ============================================================
 local Themes = {
     Default = {
@@ -238,10 +240,318 @@ function ConfigManager:Load(folder, file)
 end
 
 -- ============================================================
--- MAIN: CreateWindow
+-- KeySystem (Rayfield-style)
 -- ============================================================
+local KeySystem = {}
+
+function KeySystem:Show(options, themes)
+    local ks         = options.KeySystem or {}
+    local title      = ks.Title    or "Key System"
+    local subtitle   = ks.Subtitle or "Authentication Required"
+    local note       = ks.Note     or "Enter your key below to access this script."
+    local fileName   = ks.FileName or "AlexchadKey"
+    local saveKey    = ks.SaveKey  ~= false
+    local validKeys  = ks.Key
+    local keyURL     = ks.KeyURL
+    local actions    = ks.Actions or {}
+    local themeName  = ks.Theme    or options.Theme or "Default"
+    local theme      = themes[themeName] or themes.Default
+
+    if type(validKeys) == "string" then validKeys = {validKeys} end
+
+    if ks.GetKey and #actions == 0 then
+        table.insert(actions, {Type="Link", Text="Get Key", URL=ks.GetKey})
+    end
+
+    local function readSavedKey()
+        if not saveKey then return nil end
+        local ok, k = pcall(function()
+            if isfile and isfile("AlexchadKeys/"..fileName..".txt") then
+                return readfile("AlexchadKeys/"..fileName..".txt")
+            end
+        end)
+        return ok and k or nil
+    end
+    local function writeSavedKey(k)
+        if not saveKey then return end
+        pcall(function()
+            if not isfolder("AlexchadKeys") then makefolder("AlexchadKeys") end
+            writefile("AlexchadKeys/"..fileName..".txt", k)
+        end)
+    end
+
+    local function fetchKeysFromURL()
+        if not keyURL then return nil end
+        local ok, body = pcall(function() return game:HttpGet(keyURL) end)
+        if not ok or type(body) ~= "string" then return nil end
+        local list = {}
+        for line in body:gmatch("[^\r\n]+") do
+            local trimmed = line:match("^%s*(.-)%s*$")
+            if trimmed and #trimmed > 0 then
+                table.insert(list, trimmed)
+            end
+        end
+        return list
+    end
+
+    local function isValid(input)
+        if not input or input == "" then return false end
+        if validKeys then
+            for _, k in ipairs(validKeys) do
+                if input == k then return true end
+            end
+        end
+        if keyURL then
+            local list = fetchKeysFromURL()
+            if list then
+                for _, k in ipairs(list) do
+                    if input == k then return true end
+                end
+            end
+        end
+        return false
+    end
+
+    local forceShow = ks.ForceShow == true
+    if not forceShow then
+        local saved = readSavedKey()
+        if saved and isValid(saved) then
+            return true
+        end
+    end
+
+    local KeyGui = Instance.new("ScreenGui")
+    KeyGui.Name = "AlexchadKeySystem"
+    KeyGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    KeyGui.ResetOnSpawn = false
+    KeyGui.IgnoreGuiInset = true
+    KeyGui.Parent = GuiParent
+
+    local Bg = Instance.new("Frame")
+    Bg.Name = "Bg"
+    Bg.BackgroundColor3 = Color3.new(0,0,0)
+    Bg.BackgroundTransparency = 0.4
+    Bg.Size = UDim2.new(1,0,1,0)
+    Bg.BorderSizePixel = 0
+    Bg.Parent = KeyGui
+
+    local blur
+    pcall(function()
+        blur = Instance.new("BlurEffect")
+        blur.Name = "AlexchadKeyBlur"
+        blur.Size = 0
+        blur.Parent = Lighting
+        TweenService:Create(blur, TweenInfo.new(0.3), {Size=15}):Play()
+    end)
+
+    local Card = Instance.new("Frame")
+    Card.Name = "Card"
+    Card.AnchorPoint = Vector2.new(0.5,0.5)
+    Card.Position = UDim2.new(0.5,0,0.5,10)
+    Card.Size = UDim2.new(0,0,0,0)
+    Card.BackgroundColor3 = theme.Background
+    Card.BackgroundTransparency = 1
+    Card.ClipsDescendants = true
+    Card.Parent = Bg
+    local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0,14); corner.Parent = Card
+    local stroke = Instance.new("UIStroke"); stroke.Color = theme.Border; stroke.Transparency = 1; stroke.Thickness = 1.5; stroke.Parent = Card
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, theme.GradientStart),
+        ColorSequenceKeypoint.new(1, theme.GradientEnd)
+    })
+    grad.Rotation = 135
+    grad.Transparency = NumberSequence.new(0.3)
+    grad.Parent = Card
+
+    TweenService:Create(Card, TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+        Size = UDim2.new(0,400,0,260),
+        Position = UDim2.new(0.5,0,0.5,0),
+        BackgroundTransparency = theme.BackgroundTransparency
+    }):Play()
+    TweenService:Create(stroke, TweenInfo.new(0.4), {Transparency = theme.BorderTransparency}):Play()
+
+    task.wait(0.15)
+
+    local function mk(class, props, parent)
+        local i = Instance.new(class)
+        for k,v in pairs(props) do i[k] = v end
+        i.Parent = parent
+        return i
+    end
+
+    mk("TextLabel", {
+        BackgroundTransparency=1, Position=UDim2.new(0,20,0,18), Size=UDim2.new(1,-40,0,22),
+        Font=Enum.Font.GothamBold, Text=title, TextColor3=theme.Text, TextSize=18,
+        TextXAlignment=Enum.TextXAlignment.Left
+    }, Card)
+    mk("TextLabel", {
+        BackgroundTransparency=1, Position=UDim2.new(0,20,0,40), Size=UDim2.new(1,-40,0,16),
+        Font=Enum.Font.Gotham, Text=subtitle, TextColor3=theme.Accent, TextSize=12,
+        TextXAlignment=Enum.TextXAlignment.Left
+    }, Card)
+    mk("TextLabel", {
+        BackgroundTransparency=1, Position=UDim2.new(0,20,0,64), Size=UDim2.new(1,-40,0,40),
+        Font=Enum.Font.Gotham, Text=note, TextColor3=theme.TextMuted, TextSize=12,
+        TextXAlignment=Enum.TextXAlignment.Left, TextYAlignment=Enum.TextYAlignment.Top,
+        TextWrapped=true
+    }, Card)
+
+    local InputBox = Instance.new("Frame")
+    InputBox.Position = UDim2.new(0,20,0,114)
+    InputBox.Size = UDim2.new(1,-40,0,38)
+    InputBox.BackgroundColor3 = theme.Element
+    InputBox.BackgroundTransparency = theme.ElementTransparency
+    InputBox.Parent = Card
+    local ibc = Instance.new("UICorner"); ibc.CornerRadius = UDim.new(0,8); ibc.Parent = InputBox
+    local ibs = Instance.new("UIStroke"); ibs.Color = theme.Border; ibs.Transparency = theme.BorderTransparency; ibs.Thickness = 1; ibs.Name = "Stroke"; ibs.Parent = InputBox
+
+    local TB = mk("TextBox",{
+        BackgroundTransparency=1, Position=UDim2.new(0,12,0,0), Size=UDim2.new(1,-24,1,0),
+        Font=Enum.Font.Gotham, PlaceholderText="Enter your key...",
+        PlaceholderColor3=theme.TextMuted, Text="", TextColor3=theme.Text, TextSize=14,
+        ClearTextOnFocus=false, ClipsDescendants=true,
+        TextXAlignment=Enum.TextXAlignment.Left
+    }, InputBox)
+
+    TB.Focused:Connect(function()
+        TweenService:Create(ibs, TweenInfo.new(0.2), {Color=theme.Accent, Transparency=0}):Play()
+    end)
+    TB.FocusLost:Connect(function()
+        TweenService:Create(ibs, TweenInfo.new(0.2), {Color=theme.Border, Transparency=theme.BorderTransparency}):Play()
+    end)
+
+    local Status = mk("TextLabel",{
+        BackgroundTransparency=1, Position=UDim2.new(0,20,0,158), Size=UDim2.new(1,-40,0,16),
+        Font=Enum.Font.GothamSemibold, Text="", TextColor3=theme.Error, TextSize=12,
+        TextXAlignment=Enum.TextXAlignment.Left
+    }, Card)
+
+    local Row = Instance.new("Frame")
+    Row.BackgroundTransparency = 1
+    Row.Position = UDim2.new(0,20,1,-58)
+    Row.Size = UDim2.new(1,-40,0,40)
+    Row.Parent = Card
+    local rowList = Instance.new("UIListLayout")
+    rowList.FillDirection = Enum.FillDirection.Horizontal
+    rowList.HorizontalAlignment = Enum.HorizontalAlignment.Left
+    rowList.VerticalAlignment = Enum.VerticalAlignment.Center
+    rowList.Padding = UDim.new(0,8)
+    rowList.Parent = Row
+
+    local function makeBtn(text, primary, parent)
+        local b = Instance.new("TextButton")
+        b.BackgroundColor3 = primary and theme.Accent or theme.Element
+        b.BackgroundTransparency = primary and 0 or theme.ElementTransparency
+        b.Size = UDim2.new(0,110,0,36)
+        b.Font = Enum.Font.GothamBold
+        b.Text = text
+        b.TextColor3 = primary and theme.Text or theme.TextDark
+        b.TextSize = 13
+        b.AutoButtonColor = false
+        b.Parent = parent
+        local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(0,8); bc.Parent = b
+        local bs = Instance.new("UIStroke"); bs.Color = primary and theme.Accent or theme.Border; bs.Transparency = primary and 0.3 or theme.BorderTransparency; bs.Thickness = 1; bs.Parent = b
+        b.MouseEnter:Connect(function()
+            TweenService:Create(b, TweenInfo.new(0.15), {
+                BackgroundColor3 = primary and theme.AccentDark or theme.ElementHover,
+                BackgroundTransparency = primary and 0 or theme.ElementTransparency - 0.1,
+                TextColor3 = theme.Text
+            }):Play()
+        end)
+        b.MouseLeave:Connect(function()
+            TweenService:Create(b, TweenInfo.new(0.15), {
+                BackgroundColor3 = primary and theme.Accent or theme.Element,
+                BackgroundTransparency = primary and 0 or theme.ElementTransparency,
+                TextColor3 = primary and theme.Text or theme.TextDark
+            }):Play()
+        end)
+        return b
+    end
+
+    local validated = false
+
+    for _, act in ipairs(actions) do
+        local b = makeBtn(act.Text or "Get Key", false, Row)
+        b.MouseButton1Click:Connect(function()
+            local actType = act.Type or "Link"
+            if actType == "Link" or actType == "URL" then
+                pcall(function()
+                    if setclipboard then setclipboard(act.URL or "") end
+                end)
+                Status.TextColor3 = theme.Success
+                Status.Text = "Link copied to clipboard!"
+            elseif actType == "Callback" and act.Callback then
+                pcall(act.Callback)
+            end
+        end)
+    end
+
+    local spacer = Instance.new("Frame")
+    spacer.BackgroundTransparency = 1
+    spacer.Size = UDim2.new(1, -(#actions * 118) - 118, 0, 1)
+    spacer.LayoutOrder = 50
+    spacer.Parent = Row
+
+    local CheckBtn = makeBtn("Check Key", true, Row)
+    CheckBtn.LayoutOrder = 100
+
+    local proceed = false
+
+    CheckBtn.MouseButton1Click:Connect(function()
+        local input = TB.Text:match("^%s*(.-)%s*$") or ""
+        if input == "" then
+            Status.TextColor3 = theme.Warning
+            Status.Text = "Please enter a key."
+            return
+        end
+        Status.TextColor3 = theme.TextMuted
+        Status.Text = "Checking..."
+        CheckBtn.Text = "..."
+
+        task.spawn(function()
+            local ok = isValid(input)
+            if ok then
+                writeSavedKey(input)
+                Status.TextColor3 = theme.Success
+                Status.Text = "Key valid! Loading..."
+                validated = true
+                task.wait(0.6)
+                TweenService:Create(Card, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
+                    Size = UDim2.new(0,0,0,0), BackgroundTransparency = 1
+                }):Play()
+                TweenService:Create(Bg, TweenInfo.new(0.3), {BackgroundTransparency=1}):Play()
+                if blur then TweenService:Create(blur, TweenInfo.new(0.3), {Size=0}):Play() end
+                task.wait(0.35)
+                if blur then blur:Destroy() end
+                KeyGui:Destroy()
+                proceed = true
+            else
+                Status.TextColor3 = theme.Error
+                Status.Text = "Invalid key. Please try again."
+                CheckBtn.Text = "Check Key"
+            end
+        end)
+    end)
+
+    repeat task.wait(0.1) until proceed or not KeyGui.Parent
+
+    if blur and blur.Parent then blur:Destroy() end
+    return validated
+end
+
+-- >>> END OF PART 1 — continue with PART 2 below <<<
+-- >>> PART 2 OF 3 — paste this directly after PART 1, before PART 3 <<<
+
 function AlexchadLibrary:CreateWindow(options)
     options = options or {}
+
+    -- Key System gate
+    if options.KeySystem and options.KeySystem.Enabled then
+        local ok = KeySystem:Show(options, Themes)
+        if not ok then return nil end
+    end
+
     CleanupAllBlur()
     if GuiParent:FindFirstChild("AlexchadUI") then
         GuiParent.AlexchadUI:Destroy()
@@ -249,7 +559,7 @@ function AlexchadLibrary:CreateWindow(options)
 
     local windowName    = options.Name           or "Alexchad"
     local windowSub     = options.Subtitle       or "Interface Suite"
-    local windowVer     = options.Version        or "v2.0"
+    local windowVer     = options.Version        or "v3.0"
     local loadingTitle  = options.LoadingTitle   or "Alexchad Interface"
     local loadingSub    = options.LoadingSubtitle or "Loading..."
     local themeName     = options.Theme          or "Default"
@@ -283,7 +593,6 @@ function AlexchadLibrary:CreateWindow(options)
         ElementRefs = {}
     }
 
-    -- Load saved config
     if configEnabled then
         ConfigManager:GetSaveFolder(configFolder)
         local saved = ConfigManager:Load(configFolder, configFile)
@@ -298,22 +607,18 @@ function AlexchadLibrary:CreateWindow(options)
 
     local theme = Window.Theme
 
-    -- ScreenGui
     local ScreenGui = Utility:Create("ScreenGui", {
         Name="AlexchadUI", Parent=GuiParent,
         ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
         ResetOnSpawn=false, IgnoreGuiInset=true
     })
 
-    -- Blur
     local Blur
     if Config.BlurEnabled then
         Blur = Utility:Create("BlurEffect",{Name="AlexchadBlur", Parent=Lighting, Size=0})
     end
 
-    ------------------------------------------------------------
     -- Loading screen
-    ------------------------------------------------------------
     local LoadingFrame = Utility:Create("Frame",{
         Name="LoadingFrame", Parent=ScreenGui,
         BackgroundColor3=theme.Background, BackgroundTransparency=theme.BackgroundTransparency,
@@ -351,9 +656,7 @@ function AlexchadLibrary:CreateWindow(options)
     task.wait(Config.AnimationSpeed+0.1)
     LoadingFrame:Destroy()
 
-    ------------------------------------------------------------
     -- Main container (clips everything - fixes minimize cutoff)
-    ------------------------------------------------------------
     local MainContainer = Utility:Create("Frame",{
         Name="MainContainer", Parent=ScreenGui,
         BackgroundColor3=theme.Background, BackgroundTransparency=theme.BackgroundTransparency,
@@ -379,13 +682,10 @@ function AlexchadLibrary:CreateWindow(options)
         ZIndex=0, ScaleType=Enum.ScaleType.Slice, SliceCenter=Rect.new(24,24,276,276)
     })
 
-    -- Open animation (smoother: Quart instead of Back)
     Utility:Tween(MainContainer,{Size=UDim2.new(0,WIN_W,0,WIN_H)},Config.AnimationSpeed*1.6,Enum.EasingStyle.Quint,Enum.EasingDirection.Out)
     task.wait(Config.AnimationSpeed*0.8)
 
-    ------------------------------------------------------------
     -- Header
-    ------------------------------------------------------------
     local Header = Utility:Create("Frame",{
         Name="Header", Parent=MainContainer,
         BackgroundColor3=theme.Container, BackgroundTransparency=theme.ContainerTransparency+0.1,
@@ -408,7 +708,7 @@ function AlexchadLibrary:CreateWindow(options)
         TextXAlignment=Enum.TextXAlignment.Left
     })
 
-    -- Controls container: Minimize first (left), Close second (right)
+    -- Controls: Minimize=1 (left), Close=2 (right)
     local ControlsContainer = Utility:Create("Frame",{
         Name="Controls", Parent=Header, BackgroundTransparency=1,
         Position=UDim2.new(1,-95,0,0), Size=UDim2.new(0,80,1,0)
@@ -446,7 +746,6 @@ function AlexchadLibrary:CreateWindow(options)
         return btn
     end
 
-    -- LayoutOrder: lower = further left. So Minimize=1 (left), Close=2 (right)
     CreateControlButton("Minimize","-",1,theme.Warning,function()
         Window.Minimized = not Window.Minimized
         if Window.Minimized then
@@ -463,7 +762,6 @@ function AlexchadLibrary:CreateWindow(options)
             if c and c.Connected then c:Disconnect() end
         end
         if Blur then Utility:Tween(Blur,{Size=0},Config.AnimationSpeed*1.2) end
-        -- Smooth shrink (no bounce)
         Utility:Tween(MainContainer,{
             Size=UDim2.new(0,0,0,0),
             BackgroundTransparency=1
@@ -477,18 +775,53 @@ function AlexchadLibrary:CreateWindow(options)
 
     Utility:MakeDraggable(MainContainer, Header, Config)
 
-    ------------------------------------------------------------
+    -- Drag pill under the GUI (Rayfield-style)
+    local DragPill = Utility:Create("Frame",{
+        Name="DragPill", Parent=MainContainer,
+        BackgroundColor3=Color3.fromRGB(200,200,200),
+        BackgroundTransparency=0.7,
+        BorderSizePixel=0,
+        Position=UDim2.new(0.5,0,1,-8),
+        Size=UDim2.new(0,55,0,4),
+        AnchorPoint=Vector2.new(0.5,0.5),
+        ZIndex=10
+    },{ Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)}) })
+
+    local DragPillHit = Utility:Create("TextButton",{
+        Name="DragPillHit", Parent=MainContainer,
+        BackgroundTransparency=1, Text="",
+        AutoButtonColor=false,
+        Position=UDim2.new(0.5,0,1,-8),
+        Size=UDim2.new(0,90,0,20),
+        AnchorPoint=Vector2.new(0.5,0.5),
+        ZIndex=11
+    })
+
+    DragPillHit.MouseEnter:Connect(function()
+        Utility:Tween(DragPill,{
+            BackgroundColor3=Color3.fromRGB(255,255,255),
+            BackgroundTransparency=0.1,
+            Size=UDim2.new(0,70,0,5)
+        }, Config.AnimationSpeed*0.5)
+    end)
+    DragPillHit.MouseLeave:Connect(function()
+        Utility:Tween(DragPill,{
+            BackgroundColor3=Color3.fromRGB(200,200,200),
+            BackgroundTransparency=0.7,
+            Size=UDim2.new(0,55,0,4)
+        }, Config.AnimationSpeed*0.5)
+    end)
+
+    Utility:MakeDraggable(MainContainer, DragPillHit, Config)
+
     -- Content area
-    ------------------------------------------------------------
     local ContentArea = Utility:Create("Frame",{
         Name="ContentArea", Parent=MainContainer, BackgroundTransparency=1,
         Position=UDim2.new(0,15,0,80), Size=UDim2.new(1,-30,1,-95),
         ClipsDescendants=true
     })
 
-    ------------------------------------------------------------
     -- Tab list (scrolling)
-    ------------------------------------------------------------
     local TabContainer = Utility:Create("Frame",{
         Name="TabContainer", Parent=ContentArea,
         BackgroundColor3=theme.Container, BackgroundTransparency=theme.ContainerTransparency,
@@ -506,9 +839,7 @@ function AlexchadLibrary:CreateWindow(options)
         ClipsDescendants=true, BorderSizePixel=0
     },{ Utility:Create("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,6)}) })
 
-    ------------------------------------------------------------
     -- MainContent: viewport for the reel
-    ------------------------------------------------------------
     local MainContent = Utility:Create("Frame",{
         Name="MainContent", Parent=ContentArea,
         BackgroundColor3=theme.Container, BackgroundTransparency=theme.ContainerTransparency,
@@ -519,19 +850,14 @@ function AlexchadLibrary:CreateWindow(options)
         Utility:Create("UIStroke",{Color=theme.Border,Transparency=theme.BorderTransparency+0.2,Thickness=1})
     })
 
-    -- The reel holds every tab's content stacked vertically.
-    -- Each "page" is exactly the size of MainContent. To switch tabs we
-    -- tween the reel's Y position so the desired page lines up with the viewport.
     local Reel = Utility:Create("Frame",{
         Name="Reel", Parent=MainContent,
         BackgroundTransparency=1,
         Position=UDim2.new(0,0,0,0),
-        Size=UDim2.new(1,0,1,0)   -- will grow as we add pages
+        Size=UDim2.new(1,0,1,0)
     })
 
-    ------------------------------------------------------------
     -- Save config helper
-    ------------------------------------------------------------
     local function SaveConfig()
         if not configEnabled then return end
         local data = { Theme=Window.ThemeName, Elements={} }
@@ -542,9 +868,7 @@ function AlexchadLibrary:CreateWindow(options)
         ConfigManager:Save(configFolder, configFile, data)
     end
 
-    ------------------------------------------------------------
-    -- ApplyTheme (same logic as v1, kept compact)
-    ------------------------------------------------------------
+    -- ApplyTheme
     local function ApplyTheme(newName, animate)
         local nt = Themes[newName]; if not nt then return end
         Window.Theme=nt; Window.ThemeName=newName; theme=nt
@@ -654,104 +978,270 @@ function AlexchadLibrary:CreateWindow(options)
     end
     Window.ApplyTheme = ApplyTheme
 
-    ------------------------------------------------------------
-    -- Notifications (smoother dismiss)
-    ------------------------------------------------------------
-    function Window:Notify(opts)
-        opts = opts or {}
+    -- ============================================================
+    -- NOTIFICATION SYSTEM (Lucide-style icons, themed, queued)
+    -- Position: options.NotificationPosition = "Top" or "Bottom"
+    -- ============================================================
+    local NotifConfig = {
+        Position = (options.NotificationPosition or "Bottom"),
+        Width = 280, Spacing = 8
+    }
+    local NotifQueue = {}
+    local NotifActive = {}
+
+    local function DrawLucideIcon(parent, kind, color)
+        local box = Utility:Create("Frame",{
+            Name="Icon", Parent=parent, BackgroundTransparency=1,
+            Size=UDim2.new(0,16,0,16),
+            Position=UDim2.new(0,0,0.5,0), AnchorPoint=Vector2.new(0,0.5)
+        })
+        local function ring()
+            Utility:Create("Frame",{
+                Parent=box, BackgroundTransparency=1, Size=UDim2.new(1,0,1,0)
+            },{
+                Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)}),
+                Utility:Create("UIStroke",{Color=color, Thickness=1.5, Transparency=0})
+            })
+        end
+        if kind == "Info" then
+            ring()
+            Utility:Create("Frame",{Parent=box, BackgroundColor3=color, BorderSizePixel=0,
+                Position=UDim2.new(0.5,0,0,3), Size=UDim2.new(0,2,0,2),
+                AnchorPoint=Vector2.new(0.5,0)},{Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
+            Utility:Create("Frame",{Parent=box, BackgroundColor3=color, BorderSizePixel=0,
+                Position=UDim2.new(0.5,0,0.5,1), Size=UDim2.new(0,2,0,6),
+                AnchorPoint=Vector2.new(0.5,0.5)},{Utility:Create("UICorner",{CornerRadius=UDim.new(0,1)})})
+        elseif kind == "Success" then
+            ring()
+            Utility:Create("Frame",{Parent=box, BackgroundColor3=color, BorderSizePixel=0,
+                Position=UDim2.new(0.38,0,0.62,0), Size=UDim2.new(0,4,0,1.5),
+                AnchorPoint=Vector2.new(0.5,0.5), Rotation=45},
+                {Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
+            Utility:Create("Frame",{Parent=box, BackgroundColor3=color, BorderSizePixel=0,
+                Position=UDim2.new(0.6,0,0.45,0), Size=UDim2.new(0,7,0,1.5),
+                AnchorPoint=Vector2.new(0.5,0.5), Rotation=-45},
+                {Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
+        elseif kind == "Warning" then
+            local function line(x,y,w,rot)
+                Utility:Create("Frame",{Parent=box, BackgroundColor3=color, BorderSizePixel=0,
+                    Position=UDim2.new(x,0,y,0), Size=UDim2.new(0,w,0,1.5),
+                    AnchorPoint=Vector2.new(0.5,0.5), Rotation=rot},
+                    {Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
+            end
+            line(0.32,0.65,10,-60); line(0.68,0.65,10,60); line(0.5,0.95,12,0)
+            Utility:Create("Frame",{Parent=box, BackgroundColor3=color, BorderSizePixel=0,
+                Position=UDim2.new(0.5,0,0.55,0), Size=UDim2.new(0,1.5,0,4),
+                AnchorPoint=Vector2.new(0.5,0.5)},
+                {Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
+            Utility:Create("Frame",{Parent=box, BackgroundColor3=color, BorderSizePixel=0,
+                Position=UDim2.new(0.5,0,0.82,0), Size=UDim2.new(0,1.5,0,1.5),
+                AnchorPoint=Vector2.new(0.5,0.5)},
+                {Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
+        elseif kind == "Error" then
+            ring()
+            Utility:Create("Frame",{Parent=box, BackgroundColor3=color, BorderSizePixel=0,
+                Position=UDim2.new(0.5,0,0.5,0), Size=UDim2.new(0,7,0,1.5),
+                AnchorPoint=Vector2.new(0.5,0.5), Rotation=45},
+                {Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
+            Utility:Create("Frame",{Parent=box, BackgroundColor3=color, BorderSizePixel=0,
+                Position=UDim2.new(0.5,0,0.5,0), Size=UDim2.new(0,7,0,1.5),
+                AnchorPoint=Vector2.new(0.5,0.5), Rotation=-45},
+                {Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
+        end
+    end
+
+    local function GetNotifHolder()
+        local existing = ScreenGui:FindFirstChild("NotificationHolder")
+        if existing then return existing end
+        local pos    = (NotifConfig.Position == "Top") and UDim2.new(1,-20,0,20) or UDim2.new(1,-20,1,-20)
+        local anchor = (NotifConfig.Position == "Top") and Vector2.new(1,0) or Vector2.new(1,1)
+        local vAlign = (NotifConfig.Position == "Top") and Enum.VerticalAlignment.Top or Enum.VerticalAlignment.Bottom
+        return Utility:Create("Frame",{
+            Name="NotificationHolder", Parent=ScreenGui, BackgroundTransparency=1,
+            Position=pos, Size=UDim2.new(0,NotifConfig.Width,1,-40),
+            AnchorPoint=anchor, ZIndex=50
+        },{
+            Utility:Create("UIListLayout",{
+                SortOrder=Enum.SortOrder.LayoutOrder,
+                VerticalAlignment=vAlign,
+                HorizontalAlignment=Enum.HorizontalAlignment.Right,
+                Padding=UDim.new(0,NotifConfig.Spacing)
+            })
+        })
+    end
+
+    local function ComputeMaxNotifs()
+        local screen = ScreenGui.AbsoluteSize
+        local available = screen.Y - 80
+        return math.max(1, math.floor(available / (70 + NotifConfig.Spacing)))
+    end
+
+    local ShowNotification
+    local function PopQueue()
+        if #NotifQueue == 0 then return end
+        local max = ComputeMaxNotifs()
+        if #NotifActive >= max then return end
+        ShowNotification(table.remove(NotifQueue, 1))
+    end
+
+    ShowNotification = function(opts)
         local title    = opts.Title or "Notification"
         local content  = opts.Content or ""
         local duration = opts.Duration or 5
         local nType    = opts.Type or "Info"
-        local showBtns = opts.Buttons ~= false
-
         local typeColors = {Info=theme.Accent, Success=theme.Success, Warning=theme.Warning, Error=theme.Error}
-        local tc = typeColors[nType] or theme.Accent
-
-        local Holder = ScreenGui:FindFirstChild("NotificationHolder")
-        if not Holder then
-            Holder = Utility:Create("Frame",{
-                Name="NotificationHolder", Parent=ScreenGui, BackgroundTransparency=1,
-                Position=UDim2.new(1,-20,1,-20), Size=UDim2.new(0,340,1,-40),
-                AnchorPoint=Vector2.new(1,1)
-            },{ Utility:Create("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,VerticalAlignment=Enum.VerticalAlignment.Bottom,Padding=UDim.new(0,12)}) })
-        end
+        local accent = typeColors[nType] or theme.Accent
+        local Holder = GetNotifHolder()
 
         local NF = Utility:Create("Frame",{
             Name="Notification", Parent=Holder,
-            BackgroundColor3=theme.Background, BackgroundTransparency=theme.BackgroundTransparency-0.05,
+            BackgroundColor3=theme.Container,
+            BackgroundTransparency=theme.ContainerTransparency-0.1,
             Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
-            Position=UDim2.new(1,50,0,0), ClipsDescendants=true
+            Position=UDim2.new(1,40,0,0), ClipsDescendants=true, BorderSizePixel=0
         },{
-            Utility:Create("UICorner",{CornerRadius=UDim.new(0,Config.CornerRadius)}),
-            Utility:Create("UIStroke",{Color=tc,Transparency=0.3,Thickness=1.5}),
+            Utility:Create("UICorner",{CornerRadius=UDim.new(0,10)}),
+            Utility:Create("UIStroke",{Name="NStroke",Color=theme.Border,Transparency=theme.BorderTransparency+0.1,Thickness=1}),
             Utility:Create("UIGradient",{
-                Color=ColorSequence.new({ColorSequenceKeypoint.new(0,theme.GradientStart),ColorSequenceKeypoint.new(1,theme.GradientEnd)}),
-                Rotation=135, Transparency=NumberSequence.new(0.2)
+                Color=ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, theme.GradientStart),
+                    ColorSequenceKeypoint.new(1, theme.GradientEnd)
+                }),
+                Rotation=135, Transparency=NumberSequence.new(0.45)
+            }),
+            Utility:Create("UIPadding",{
+                PaddingTop=UDim.new(0,10), PaddingBottom=UDim.new(0,10),
+                PaddingLeft=UDim.new(0,12), PaddingRight=UDim.new(0,12)
             })
         })
+        table.insert(NotifActive, NF)
 
-        Utility:Create("Frame",{Name="AccentBar",Parent=NF,BackgroundColor3=tc,Size=UDim2.new(0,4,1,0),Position=UDim2.new(0,0,0,0)},{Utility:Create("UICorner",{CornerRadius=UDim.new(0,4)})})
-
-        local CC = Utility:Create("Frame",{
-            Name="ContentContainer", Parent=NF, BackgroundTransparency=1,
-            Position=UDim2.new(0,16,0,0), Size=UDim2.new(1,-20,0,0),
-            AutomaticSize=Enum.AutomaticSize.Y
+        local Inner = Utility:Create("Frame",{
+            Parent=NF, BackgroundTransparency=1,
+            Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y
         },{
-            Utility:Create("UIPadding",{PaddingTop=UDim.new(0,14),PaddingBottom=UDim.new(0,14),PaddingRight=UDim.new(0,10)}),
-            Utility:Create("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,8)})
+            Utility:Create("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,4)})
         })
 
-        local HF = Utility:Create("Frame",{Name="Header",Parent=CC,BackgroundTransparency=1,Size=UDim2.new(1,0,0,24)})
-        Utility:Create("TextLabel",{Name="Icon",Parent=HF,BackgroundTransparency=1,Position=UDim2.new(0,0,0,0),Size=UDim2.new(0,24,0,24),Font=Enum.Font.GothamBold,Text=nType=="Success" and "✓" or nType=="Warning" and "!" or nType=="Error" and "✗" or "i",TextColor3=tc,TextSize=16})
-        Utility:Create("TextLabel",{Name="Title",Parent=HF,BackgroundTransparency=1,Position=UDim2.new(0,30,0,0),Size=UDim2.new(1,-70,1,0),Font=Enum.Font.GothamBold,Text=title,TextColor3=theme.Text,TextSize=15,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd})
-        local CloseBtn = Utility:Create("TextButton",{Name="Close",Parent=HF,BackgroundColor3=theme.Element,BackgroundTransparency=0.5,Position=UDim2.new(1,-24,0,0),Size=UDim2.new(0,24,0,24),Font=Enum.Font.GothamBold,Text="X",TextColor3=theme.TextDark,TextSize=12,AutoButtonColor=false},{Utility:Create("UICorner",{CornerRadius=UDim.new(0,6)})})
+        local Row = Utility:Create("Frame",{
+            Parent=Inner, BackgroundTransparency=1,
+            Size=UDim2.new(1,0,0,18), LayoutOrder=1
+        })
+        local IconHolder = Utility:Create("Frame",{
+            Parent=Row, BackgroundTransparency=1,
+            Position=UDim2.new(0,0,0.5,0), Size=UDim2.new(0,16,0,16),
+            AnchorPoint=Vector2.new(0,0.5)
+        })
+        DrawLucideIcon(IconHolder, nType, accent)
 
-        Utility:Create("TextLabel",{Name="Content",Parent=CC,BackgroundTransparency=1,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,Font=Enum.Font.Gotham,Text=content,TextColor3=theme.TextDark,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left,TextWrapped=true})
+        Utility:Create("TextLabel",{
+            Parent=Row, BackgroundTransparency=1,
+            Position=UDim2.new(0,22,0,0), Size=UDim2.new(1,-44,1,0),
+            Font=Enum.Font.GothamBold, Text=title,
+            TextColor3=theme.Text, TextSize=13,
+            TextXAlignment=Enum.TextXAlignment.Left,
+            TextTruncate=Enum.TextTruncate.AtEnd
+        })
 
-        local PC = Utility:Create("Frame",{Name="ProgressContainer",Parent=CC,BackgroundColor3=theme.Element,BackgroundTransparency=0.5,Size=UDim2.new(1,0,0,4)},{Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
-        local PFill = Utility:Create("Frame",{Name="Fill",Parent=PC,BackgroundColor3=tc,Size=UDim2.new(1,0,1,0)},{Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
+        local CloseBtn = Utility:Create("TextButton",{
+            Parent=Row, BackgroundTransparency=1,
+            Position=UDim2.new(1,-16,0.5,0), Size=UDim2.new(0,16,0,16),
+            AnchorPoint=Vector2.new(0,0.5),
+            Font=Enum.Font.Gotham, Text="", AutoButtonColor=false
+        })
+        Utility:Create("Frame",{Parent=CloseBtn, BackgroundColor3=theme.TextMuted, BorderSizePixel=0,
+            Position=UDim2.new(0.5,0,0.5,0), Size=UDim2.new(0,9,0,1.2),
+            AnchorPoint=Vector2.new(0.5,0.5), Rotation=45},
+            {Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
+        Utility:Create("Frame",{Parent=CloseBtn, BackgroundColor3=theme.TextMuted, BorderSizePixel=0,
+            Position=UDim2.new(0.5,0,0.5,0), Size=UDim2.new(0,9,0,1.2),
+            AnchorPoint=Vector2.new(0.5,0.5), Rotation=-45},
+            {Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
 
-        if showBtns then
-            local BR = Utility:Create("Frame",{Name="Buttons",Parent=CC,BackgroundTransparency=1,Size=UDim2.new(1,0,0,32)},{Utility:Create("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,HorizontalAlignment=Enum.HorizontalAlignment.Right,VerticalAlignment=Enum.VerticalAlignment.Center,Padding=UDim.new(0,8)})})
-            local OK = Utility:Create("TextButton",{Name="OK",Parent=BR,BackgroundColor3=tc,Size=UDim2.new(0,70,0,28),Font=Enum.Font.GothamBold,Text="OK",TextColor3=theme.Text,TextSize=12,AutoButtonColor=false},{Utility:Create("UICorner",{CornerRadius=UDim.new(0,6)})})
-            OK.MouseEnter:Connect(function() Utility:Tween(OK,{BackgroundColor3=theme.AccentDark},Config.AnimationSpeed*0.5) end)
-            OK.MouseLeave:Connect(function() Utility:Tween(OK,{BackgroundColor3=tc},Config.AnimationSpeed*0.5) end)
+        CloseBtn.MouseEnter:Connect(function()
+            for _, f in ipairs(CloseBtn:GetChildren()) do
+                if f:IsA("Frame") then
+                    Utility:Tween(f,{BackgroundColor3=theme.Text},Config.AnimationSpeed*0.4)
+                end
+            end
+        end)
+        CloseBtn.MouseLeave:Connect(function()
+            for _, f in ipairs(CloseBtn:GetChildren()) do
+                if f:IsA("Frame") then
+                    Utility:Tween(f,{BackgroundColor3=theme.TextMuted},Config.AnimationSpeed*0.4)
+                end
+            end
+        end)
+
+        if content and #content > 0 then
+            Utility:Create("TextLabel",{
+                Parent=Inner, BackgroundTransparency=1,
+                Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+                Font=Enum.Font.Gotham, Text=content,
+                TextColor3=theme.TextDark, TextSize=12,
+                TextXAlignment=Enum.TextXAlignment.Left, TextWrapped=true,
+                LayoutOrder=2
+            })
         end
 
-        Utility:Tween(NF,{Position=UDim2.new(0,0,0,0)},Config.AnimationSpeed,Enum.EasingStyle.Quint,Enum.EasingDirection.Out)
+        local PC = Utility:Create("Frame",{
+            Parent=Inner, BackgroundColor3=theme.Element, BackgroundTransparency=0.6,
+            Size=UDim2.new(1,0,0,1.5), LayoutOrder=3, BorderSizePixel=0
+        },{ Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)}) })
+        local PFill = Utility:Create("Frame",{
+            Parent=PC, BackgroundColor3=accent, Size=UDim2.new(1,0,1,0), BorderSizePixel=0
+        },{ Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)}) })
+
+        Utility:Tween(NF, {Position=UDim2.new(0,0,0,0)}, Config.AnimationSpeed*1.0, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
         Utility:Tween(PFill,{Size=UDim2.new(0,0,1,0)},duration,Enum.EasingStyle.Linear)
 
-        local closed=false
+        local closed = false
         local function CloseN()
             if closed then return end
-            closed=true
-            Utility:Tween(NF,{Position=UDim2.new(1,50,0,0),BackgroundTransparency=1},Config.AnimationSpeed*1.2,Enum.EasingStyle.Quint,Enum.EasingDirection.InOut)
-            task.wait(Config.AnimationSpeed*1.3)
+            closed = true
+            local fd = Config.AnimationSpeed * 1.0
+            local ti = TweenInfo.new(fd, Enum.EasingStyle.Quint, Enum.EasingDirection.InOut)
+            TweenService:Create(NF, ti, {Position=UDim2.new(1,40,0,0), BackgroundTransparency=1}):Play()
+            for _, d in ipairs(NF:GetDescendants()) do
+                if d:IsA("TextLabel") or d:IsA("TextButton") then
+                    TweenService:Create(d, ti, {TextTransparency=1}):Play()
+                elseif d:IsA("UIStroke") then
+                    TweenService:Create(d, ti, {Transparency=1}):Play()
+                elseif d:IsA("Frame") then
+                    TweenService:Create(d, ti, {BackgroundTransparency=1}):Play()
+                end
+            end
+            task.wait(fd + 0.05)
+            for i, x in ipairs(NotifActive) do
+                if x == NF then table.remove(NotifActive, i); break end
+            end
             if NF then NF:Destroy() end
+            PopQueue()
         end
+
         CloseBtn.MouseButton1Click:Connect(CloseN)
-        if showBtns then
-            local okBtn = CC:FindFirstChild("Buttons") and CC.Buttons:FindFirstChild("OK")
-            if okBtn then okBtn.MouseButton1Click:Connect(CloseN) end
-        end
-        task.delay(duration, function() if NF and NF.Parent then CloseN() end end)
+        task.delay(duration, function()
+            if NF and NF.Parent then CloseN() end
+        end)
     end
 
-    ------------------------------------------------------------
+    function Window:Notify(opts)
+        opts = opts or {}
+        local max = ComputeMaxNotifs()
+        if #NotifActive >= max then
+            table.insert(NotifQueue, opts)
+            return
+        end
+        ShowNotification(opts)
+    end
+
     -- REEL helpers
-    ------------------------------------------------------------
     local function RecalculateReel(animateTo)
-        -- Reel height = (number of tabs) * viewport height, in offset pixels
         local count = #Window.Tabs
         if count == 0 then return end
         local viewportH = MainContent.AbsoluteSize.Y
-        if viewportH <= 0 then
-            -- fallback to expected height (window not yet measured)
-            viewportH = WIN_H - 95 -- ContentArea height
-        end
+        if viewportH <= 0 then viewportH = WIN_H - 95 end
         Reel.Size = UDim2.new(1, 0, 0, viewportH * count)
-        -- position each page
         for i,tab in ipairs(Window.Tabs) do
             tab.Page.Position = UDim2.new(0, 0, 0, (i-1) * viewportH)
             tab.Page.Size     = UDim2.new(1, 0, 0, viewportH)
@@ -765,16 +1255,15 @@ function AlexchadLibrary:CreateWindow(options)
         end
     end
 
-    -- Recalculate when MainContent resizes (e.g. theme change, window resize)
     MainContent:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
         if Window.CurrentTab then
             RecalculateReel(Window.CurrentTab)
         end
     end)
 
-    ------------------------------------------------------------
-    -- CreateTab
-    ------------------------------------------------------------
+-- >>> END OF PART 2 — continue with PART 3 below <<<
+-- >>> PART 3 OF 3 — paste this directly after PART 2 to finish the file <<<
+
     function Window:CreateTab(tabOpts)
         tabOpts = tabOpts or {}
         local tabName = tabOpts.Name or "Tab"
@@ -782,7 +1271,6 @@ function AlexchadLibrary:CreateWindow(options)
 
         local Tab = {Name=tabName, Sections={}}
 
-        ---- Tab button (left list) ----
         local TabButton = Utility:Create("TextButton",{
             Name=tabName, Parent=TabList,
             BackgroundColor3=theme.Element, BackgroundTransparency=theme.ElementTransparency,
@@ -795,16 +1283,14 @@ function AlexchadLibrary:CreateWindow(options)
         local TabLabel = Utility:Create("TextLabel",{Name="Label",Parent=TabButton,BackgroundTransparency=1,Position=UDim2.new(0,38,0,0),Size=UDim2.new(1,-48,1,0),Font=Enum.Font.GothamSemibold,Text=tabName,TextColor3=theme.TextDark,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd})
         local TabIndicator = Utility:Create("Frame",{Name="Indicator",Parent=TabButton,BackgroundColor3=theme.Accent,BackgroundTransparency=1,Position=UDim2.new(1,-4,0.2,0),Size=UDim2.new(0,3,0.6,0)},{Utility:Create("UICorner",{CornerRadius=UDim.new(1,0)})})
 
-        ---- Page inside the reel (one per tab, stacked vertically) ----
         local Page = Utility:Create("Frame",{
             Name=tabName.."Page", Parent=Reel,
             BackgroundTransparency=1,
-            Size=UDim2.new(1,0,1,0),  -- updated by RecalculateReel
+            Size=UDim2.new(1,0,1,0),
             Position=UDim2.new(0,0,0,0),
             ClipsDescendants=true
         })
 
-        ---- Scrolling content inside the page ----
         local TabContent = Utility:Create("ScrollingFrame",{
             Name=tabName.."Content", Parent=Page,
             BackgroundTransparency=1,
@@ -827,13 +1313,10 @@ function AlexchadLibrary:CreateWindow(options)
         table.insert(Window.Tabs, Tab)
         RecalculateReel()
 
-        ---- Tab selection: reel animation ----
         local function SelectTab()
             if Window.CurrentTab == Tab then return end
             local oldTab = Window.CurrentTab
             Window.CurrentTab = Tab
-
-            -- Update button visuals
             if oldTab then
                 Utility:Tween(oldTab.Button,{BackgroundColor3=theme.Element,BackgroundTransparency=theme.ElementTransparency},Config.AnimationSpeed)
                 Utility:Tween(oldTab.Label,{TextColor3=theme.TextDark},Config.AnimationSpeed)
@@ -845,7 +1328,6 @@ function AlexchadLibrary:CreateWindow(options)
             Utility:Tween(TabIcon,{TextColor3=theme.Text},Config.AnimationSpeed)
             Utility:Tween(TabIndicator,{BackgroundTransparency=0},Config.AnimationSpeed)
 
-            -- Slide the reel
             local idx = 0
             for i,t in ipairs(Window.Tabs) do if t==Tab then idx=i break end end
             local viewportH = MainContent.AbsoluteSize.Y
@@ -853,7 +1335,6 @@ function AlexchadLibrary:CreateWindow(options)
 
             Utility:Tween(Reel, {Position = UDim2.new(0,0,0,targetY)},
                 Config.TabSwitchSpeed, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-
             Utility:Ripple(TabButton, theme, Config)
         end
 
@@ -869,7 +1350,6 @@ function AlexchadLibrary:CreateWindow(options)
         end)
         TabButton.MouseButton1Click:Connect(SelectTab)
 
-        -- Auto-select first tab
         if #Window.Tabs == 1 then
             Window.CurrentTab = Tab
             TabButton.BackgroundColor3 = theme.Accent
@@ -880,9 +1360,6 @@ function AlexchadLibrary:CreateWindow(options)
             Reel.Position = UDim2.new(0,0,0,0)
         end
 
-        ----------------------------------------------------------
-        -- CreateSection (and all elements — same as v1)
-        ----------------------------------------------------------
         function Tab:CreateSection(sectionName)
             local Section = {Name=sectionName}
             local SectionFrame = Utility:Create("Frame",{
@@ -897,7 +1374,6 @@ function AlexchadLibrary:CreateWindow(options)
             end
             table.insert(Tab.Sections, Section)
 
-            -- Button
             function Section:CreateButton(opts)
                 opts = opts or {}
                 local name = opts.Name or "Button"
@@ -925,7 +1401,6 @@ function AlexchadLibrary:CreateWindow(options)
                 return {SetText=function(_,t) Label.Text=t end}
             end
 
-            -- Toggle
             function Section:CreateToggle(opts)
                 opts = opts or {}
                 local name=opts.Name or "Toggle"
@@ -965,7 +1440,6 @@ function AlexchadLibrary:CreateWindow(options)
                 return Toggle
             end
 
-            -- Slider
             function Section:CreateSlider(opts)
                 opts = opts or {}
                 local name=opts.Name or "Slider"
@@ -1017,7 +1491,6 @@ function AlexchadLibrary:CreateWindow(options)
                 callback(default); return Slider
             end
 
-            -- Dropdown
             function Section:CreateDropdown(opts)
                 opts = opts or {}
                 local name=opts.Name or "Dropdown"
@@ -1131,7 +1604,6 @@ function AlexchadLibrary:CreateWindow(options)
                 return Dropdown
             end
 
-            -- Input
             function Section:CreateInput(opts)
                 opts=opts or {}
                 local name=opts.Name or "Input"
@@ -1162,7 +1634,6 @@ function AlexchadLibrary:CreateWindow(options)
                 return Input
             end
 
-            -- Keybind
             function Section:CreateKeybind(opts)
                 opts=opts or {}
                 local name=opts.Name or "Keybind"
@@ -1218,7 +1689,6 @@ function AlexchadLibrary:CreateWindow(options)
                 return Keybind
             end
 
-            -- Color Picker
             function Section:CreateColorPicker(opts)
                 opts=opts or {}
                 local name=opts.Name or "Color Picker"
@@ -1284,7 +1754,6 @@ function AlexchadLibrary:CreateWindow(options)
                 callback(default); return CP
             end
 
-            -- Label
             function Section:CreateLabel(text)
                 local Frame=Utility:Create("Frame",{Name="Label",Parent=SectionFrame,BackgroundColor3=theme.Element,BackgroundTransparency=theme.ElementTransparency+0.1,Size=UDim2.new(1,0,0,32)},{Utility:Create("UICorner",{CornerRadius=UDim.new(0,Config.ElementCornerRadius)})})
                 local Text=Utility:Create("TextLabel",{Name="Text",Parent=Frame,BackgroundTransparency=1,Position=UDim2.new(0,15,0,0),Size=UDim2.new(1,-30,1,0),Font=Enum.Font.Gotham,Text=text or "Label",TextColor3=theme.TextDark,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left})
@@ -1292,7 +1761,6 @@ function AlexchadLibrary:CreateWindow(options)
                 return {Set=function(_,t) Text.Text=t; Text.TextTransparency=0.5; Utility:Tween(Text,{TextTransparency=0},Config.AnimationSpeed) end}
             end
 
-            -- Paragraph
             function Section:CreateParagraph(opts)
                 opts=opts or {}
                 local title=opts.Title or "Paragraph"
@@ -1314,9 +1782,9 @@ function AlexchadLibrary:CreateWindow(options)
         return Tab
     end
 
-    ------------------------------------------------------------
-    -- Dialog (smooth, no bounce)
-    ------------------------------------------------------------
+    -- ============================================================
+    -- Dialog (uniform fade, no text persisting)
+    -- ============================================================
     function Window:Dialog(opts)
         opts = opts or {}
         local title=opts.Title or "Dialog"
@@ -1329,7 +1797,6 @@ function AlexchadLibrary:CreateWindow(options)
             Size=UDim2.new(1,0,1,0), ZIndex=100
         })
 
-        -- Start at full size but transparent + slightly offset; tween in smoothly
         local DF = Utility:Create("Frame",{
             Name="Dialog", Parent=Bg,
             BackgroundColor3=theme.Background, BackgroundTransparency=1,
@@ -1350,7 +1817,6 @@ function AlexchadLibrary:CreateWindow(options)
         local DContent = Utility:Create("TextLabel",{Parent=DF,BackgroundTransparency=1,Position=UDim2.new(0,25,0,50),Size=UDim2.new(1,-50,0,60),Font=Enum.Font.Gotham,Text=content,TextColor3=theme.TextDark,TextSize=14,TextTransparency=1,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true,ZIndex=102})
         local BC = Utility:Create("Frame",{Parent=DF,BackgroundTransparency=1,Position=UDim2.new(0,25,1,-60),Size=UDim2.new(1,-50,0,38),ZIndex=102},{Utility:Create("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,HorizontalAlignment=Enum.HorizontalAlignment.Right,VerticalAlignment=Enum.VerticalAlignment.Center,Padding=UDim.new(0,12)})})
 
-        -- Smooth fade+rise in (no bounce)
         Utility:Tween(Bg,{BackgroundTransparency=0.5},Config.AnimationSpeed*1.2,Enum.EasingStyle.Quart)
         Utility:Tween(DF,{BackgroundTransparency=theme.BackgroundTransparency,Position=UDim2.new(0.5,0,0.5,0)},Config.AnimationSpeed*1.2,Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
         Utility:Tween(DF:FindFirstChild("DStroke"),{Transparency=theme.BorderTransparency},Config.AnimationSpeed*1.2,Enum.EasingStyle.Quart)
@@ -1362,18 +1828,26 @@ function AlexchadLibrary:CreateWindow(options)
         local function CloseDialog()
             if closed then return end
             closed = true
-            Utility:Tween(Bg,{BackgroundTransparency=1},Config.AnimationSpeed*1.1,Enum.EasingStyle.Quart)
-            Utility:Tween(DF,{BackgroundTransparency=1, Position=UDim2.new(0.5,0,0.5,8)},Config.AnimationSpeed*1.1,Enum.EasingStyle.Quart,Enum.EasingDirection.InOut)
-            Utility:Tween(DF:FindFirstChild("DStroke"),{Transparency=1},Config.AnimationSpeed*1.1)
-            Utility:Tween(DTitle,{TextTransparency=1},Config.AnimationSpeed*0.8)
-            Utility:Tween(DContent,{TextTransparency=1},Config.AnimationSpeed*0.8)
-            for _,btn in pairs(BC:GetChildren()) do
-                if btn:IsA("TextButton") then
-                    Utility:Tween(btn,{BackgroundTransparency=1,TextTransparency=1},Config.AnimationSpeed*0.8)
+            local fadeDur = Config.AnimationSpeed * 1.1
+            local ti = TweenInfo.new(fadeDur, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+            TweenService:Create(Bg, ti, {BackgroundTransparency=1}):Play()
+            TweenService:Create(DF, ti, {BackgroundTransparency=1}):Play()
+            for _, d in ipairs(DF:GetDescendants()) do
+                if d:IsA("TextLabel") or d:IsA("TextButton") then
+                    TweenService:Create(d, ti, {TextTransparency=1}):Play()
+                    if d:IsA("TextButton") then
+                        TweenService:Create(d, ti, {BackgroundTransparency=1}):Play()
+                    end
+                elseif d:IsA("UIStroke") then
+                    TweenService:Create(d, ti, {Transparency=1}):Play()
+                elseif d:IsA("Frame") and d ~= DF then
+                    TweenService:Create(d, ti, {BackgroundTransparency=1}):Play()
                 end
             end
-            if Blur then Utility:Tween(Blur,{Size = Window.Minimized and 5 or 10},Config.AnimationSpeed*1.1,Enum.EasingStyle.Quart) end
-            task.wait(Config.AnimationSpeed*1.3)
+            if Blur then
+                TweenService:Create(Blur, ti, {Size = Window.Minimized and 5 or 10}):Play()
+            end
+            task.wait(fadeDur + 0.05)
             if Bg then Bg:Destroy() end
         end
 
@@ -1396,9 +1870,9 @@ function AlexchadLibrary:CreateWindow(options)
         end)
     end
 
-    ------------------------------------------------------------
+    -- ============================================================
     -- Destroy / Toggle / Theme API
-    ------------------------------------------------------------
+    -- ============================================================
     function Window:Destroy()
         for _,c in pairs(Window.Connections) do
             if c and c.Connected then c:Disconnect() end
@@ -1430,11 +1904,13 @@ function AlexchadLibrary:CreateWindow(options)
     function Window:SetTheme(n) ApplyTheme(n,true) end
     function Window:GetThemes() local l={}; for n,_ in pairs(Themes) do table.insert(l,n) end; return l end
 
-    -- Toggle keybind
+    -- Toggle keybind (FIXED: properly handles gpe so RightShift works)
     local toggleKey = options.ToggleKey or Enum.KeyCode.RightShift
     table.insert(Window.Connections, UserInputService.InputBegan:Connect(function(input, gpe)
-        if gpe then return end
-        if input.KeyCode==toggleKey then Window:Toggle() end
+        if input.KeyCode ~= toggleKey then return end
+        local focused = UserInputService:GetFocusedTextBox()
+        if focused then return end
+        Window:Toggle()
     end))
 
     return Window
